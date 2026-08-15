@@ -1,4 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { randomUUID } from "node:crypto";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -19,8 +20,17 @@ import {
 } from "./sheet-chart.js";
 import { VERIFIED_SHEET_FUNCTIONS } from "./sheet-formula.js";
 import { proprietaryBlockTypes } from "./lake-document.js";
+import {
+  buildCapabilityReport,
+  capabilityToolNames,
+} from "./capability-registry.js";
+import type { AppConfig } from "./config.js";
+import type { ContractRegistry } from "./contracts.js";
+import { toSafeToolError } from "./tool-error.js";
 
 export interface McpDependencies {
+  config: AppConfig;
+  contracts: ContractRegistry;
   db: AppDatabase;
   sessions: SessionStore;
   login: LoginManager;
@@ -42,6 +52,7 @@ interface ToolDefinition {
 }
 
 export const MCP_INSTRUCTIONS = `语雀网页会话 MCP（本地安全完善版）。
+能力发现规则：任何工作流开始前优先调用 yuque_get_capabilities。availability=disabled 的能力不得尝试；preview_only 只允许生成本地Diff，不代表可以远程Confirm。WRITE_CONSISTENCY_MODE默认strict，缺少可靠并发保护时远程Confirm会在发包前失败关闭；只有部署者显式启用best_effort且目标命中精确知识库白名单时才允许进入已验证写契约。
 个人/空间作用域规则：先调用 yuque_list_scopes 发现当前员工可用作用域。读取个人空间时给列表或索引工具显式传 scope_id=personal；读取公司空间时传 scope_id=organization 或返回的 organization:<id>。给定完整知识库或文档URL的工具会自动识别Host和作用域。不得调用或猜测网页全局“切换空间”接口，因为并发会话之间不能共享可变上下文。
 强制路径提示规则：用户询问任何文档或目录时，回答正文、摘要或目录内容之前，必须先输出“完整路径：<个人：姓名或空间：组织 / 知识库名 / 目录层级 / 文档名>”和对应URL。不得只报标题。若同名结果位于不同路径，必须列出每个候选的完整路径和URL并让用户确认，未确认前不得自行选择。
 删除边界规则：Doc、Sheet和个人知识库整对象删除工具存在，但默认关闭；只有部署者显式开启、目标命中精确知识库白名单且专用个人Host契约完成真实捕获、关闭浏览器重放和删除后对账时才生成Preview。Preview必须展示完整路径和不可恢复影响；Confirm除diff_digest及confirm_deletions=true外还必须原样提交完整路径confirmation_text。非空知识库还必须在Preview显式allow_nonempty=true。DELETE方法本身不等于资源删除，例如DELETE /lock仅释放临时协作锁。
@@ -94,6 +105,12 @@ const scopeIdProperty = () => ({
 });
 
 export const toolDefinitions: ToolDefinition[] = [
+  {
+    name: "yuque_get_capabilities",
+    description:
+      "返回当前服务版本、契约版本、strict/best_effort写入模式，以及每个MCP工具的available/preview_only/disabled状态。该工具不访问语雀，也不返回Host、Token或账号信息。",
+    inputSchema: emptySchema,
+  },
   {
     name: "yuque_auth_status",
     description:
@@ -545,7 +562,7 @@ export function createMcpServer(
   deps: McpDependencies,
 ): Server {
   const server = new Server(
-    { name: "yuque-web-mcp", version: "0.3.0" },
+    { name: "yuque-web-mcp", version: "0.3.1" },
     { capabilities: { tools: {} }, instructions: MCP_INSTRUCTIONS },
   );
 
@@ -553,6 +570,7 @@ export function createMcpServer(
     tools: toolDefinitions,
   }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const requestId = randomUUID();
     try {
       const args = asObject(request.params.arguments);
       const result = await callTool(
@@ -581,7 +599,12 @@ export function createMcpServer(
     } catch (error) {
       return {
         isError: true,
-        content: [{ type: "text", text: safeError(error) }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(toSafeToolError(error, requestId)),
+          },
+        ],
       };
     }
   });
@@ -608,6 +631,8 @@ async function callTool(
         relogin_required: !session,
       };
     }
+    case "yuque_get_capabilities":
+      return buildCapabilityReport(deps.config, deps.contracts);
     case "yuque_login_begin": {
       const providerValue = optionalString(args, "provider") ?? "dingtalk";
       const provider = parseLoginProvider(providerValue);
@@ -1121,11 +1146,12 @@ function isPersonalYuqueUrl(value: string): boolean {
   }
 }
 
-function safeError(error: unknown): string {
-  if (!(error instanceof Error)) return "Operation failed";
-  const message = error.message.replace(
-    /(Bearer|Cookie|csrf|token)\s*[:=]\s*\S+/gi,
-    "$1=[redacted]",
-  );
-  return message.slice(0, 500);
+export function assertCapabilityRegistryMatchesTools(): void {
+  const tools = toolDefinitions.map((tool) => tool.name);
+  const capabilities = capabilityToolNames();
+  if (JSON.stringify(tools) !== JSON.stringify(capabilities)) {
+    throw new Error("Capability Registry and MCP tool definitions differ");
+  }
 }
+
+assertCapabilityRegistryMatchesTools();

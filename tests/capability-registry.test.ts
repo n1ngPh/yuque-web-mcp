@@ -1,0 +1,74 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildCapabilityReport,
+  capabilityToolNames,
+} from "../src/capability-registry.js";
+import type { AppConfig } from "../src/config.js";
+import type { ContractRegistry } from "../src/contracts.js";
+import { toolDefinitions } from "../src/mcp.js";
+
+describe("Capability Registry", () => {
+  it("is the complete ordered status source for all MCP tools", () => {
+    expect(capabilityToolNames()).toEqual(
+      toolDefinitions.map((tool) => tool.name),
+    );
+    expect(capabilityToolNames()).toHaveLength(30);
+  });
+
+  it("reports strict mode without exposing configured secrets or hosts", () => {
+    const report = buildCapabilityReport(config("strict"), contracts());
+    const confirm = (
+      report.capabilities as Array<Record<string, unknown>>
+    ).find((entry) => entry.tool === "yuque_confirm_change");
+    expect(report).toMatchObject({
+      server_version: "0.3.1",
+      contract_version: "fixture-contract",
+      write_consistency_mode: "strict",
+      safeguards: {
+        object_deletion_enabled: false,
+        permission_changes_enabled: false,
+        exact_write_allowlist_configured: false,
+      },
+    });
+    expect(confirm).toMatchObject({
+      availability: "preview_only",
+      required_write_mode: "strict",
+      reasonCode: "strict_mode_default",
+    });
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain("secret-token");
+    expect(serialized).not.toContain("company.invalid");
+    expect(serialized).not.toContain("employee.a");
+  });
+
+  it("marks Confirm available only after best_effort is explicit", () => {
+    const report = buildCapabilityReport(config("best_effort"), contracts());
+    const confirm = (
+      report.capabilities as Array<Record<string, unknown>>
+    ).find((entry) => entry.tool === "yuque_confirm_change");
+    expect(confirm).toMatchObject({
+      availability: "available",
+      required_write_mode: "best_effort",
+    });
+  });
+});
+
+function config(writeConsistencyMode: "strict" | "best_effort"): AppConfig {
+  return {
+    writeConsistencyMode,
+    ownerId: "employee.a",
+    mcpBearerToken: "secret-token".repeat(4),
+    yuqueHost: "https://company.invalid",
+  } as AppConfig;
+}
+
+function contracts(): ContractRegistry {
+  return {
+    manifest: {
+      version: "fixture-contract",
+      verifiedAt: "2026-08-15T00:00:00.000Z",
+      sourceBundles: [],
+      endpoints: [],
+    },
+  } as unknown as ContractRegistry;
+}

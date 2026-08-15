@@ -42,7 +42,7 @@ describe("Streamable HTTP single-owner boundary", () => {
         params: {},
       });
       expect(tools.response.status).toBe(200);
-      expect(tools.payload.result?.tools).toHaveLength(29);
+      expect(tools.payload.result?.tools).toHaveLength(30);
 
       const invalidSessionToken = await rpc(mcpUrl, "invalid", sessionA, {
         jsonrpc: "2.0",
@@ -260,6 +260,7 @@ function testConfig(dataDir: string, port: number): AppConfig {
     loginTtlSeconds: 300,
     changeTtlSeconds: 600,
     requestTimeoutMs: 1_000,
+    writeConsistencyMode: "strict",
     allowUnverifiedContracts: false,
   };
 }

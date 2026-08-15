@@ -41,6 +41,7 @@ export interface AppConfig {
   loginTtlSeconds: number;
   changeTtlSeconds: number;
   requestTimeoutMs: number;
+  writeConsistencyMode: "strict" | "best_effort";
   allowUnverifiedContracts: boolean;
   allowObjectDeletion?: boolean;
   allowPermissionChanges?: boolean;
@@ -115,11 +116,19 @@ export function loadConfig(): AppConfig {
     loginTtlSeconds: positiveInt("LOGIN_TTL_SECONDS", 300),
     changeTtlSeconds: positiveInt("CHANGE_TTL_SECONDS", 600),
     requestTimeoutMs: positiveInt("YUQUE_REQUEST_TIMEOUT_MS", 15000),
+    writeConsistencyMode: writeConsistencyMode(),
     allowUnverifiedContracts: process.env.ALLOW_UNVERIFIED_CONTRACTS === "true",
     allowObjectDeletion: strictBoolean("ALLOW_OBJECT_DELETION", false),
     allowPermissionChanges: strictBoolean("ALLOW_PERMISSION_CHANGES", false),
     writeBookAllowlist,
   };
+}
+
+function writeConsistencyMode(): "strict" | "best_effort" {
+  const value = process.env.WRITE_CONSISTENCY_MODE?.trim().toLowerCase();
+  if (!value || value === "strict") return "strict";
+  if (value === "best_effort") return "best_effort";
+  throw new Error("WRITE_CONSISTENCY_MODE must be strict or best_effort");
 }
 
 function strictBoolean(name: string, fallback: boolean): boolean {

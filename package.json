@@ -1,6 +1,6 @@
 {
   "name": "yuque-web-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Secure self-hosted MCP server for Yuque web sessions",
   "type": "module",
@@ -13,9 +13,11 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "scan:public": "node deploy/check-public-content.mjs",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
-    "check": "npm run format:check && npm run typecheck && npm test && npm run build",
+    "check": "npm run format:check && npm run typecheck && npm run test:coverage && npm run build && npm run scan:public",
     "start": "node dist/src/index.js",
     "admin": "node dist/src/admin.js",
     "local:start": "node deploy/local.mjs serve",
@@ -40,6 +42,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "22.18.6",
+    "@vitest/coverage-v8": "4.1.10",
     "prettier": "3.9.6",
     "tsx": "4.23.12",
     "typescript": "5.9.2",

@@ -80,6 +80,7 @@ async function loadOrCreateEnvironment() {
       "LOGIN_TTL_SECONDS=300",
       "CHANGE_TTL_SECONDS=600",
       "YUQUE_REQUEST_TIMEOUT_MS=15000",
+      "WRITE_CONSISTENCY_MODE=strict",
       "ALLOW_UNVERIFIED_CONTRACTS=false",
       "ALLOW_OBJECT_DELETION=false",
       "ALLOW_PERMISSION_CHANGES=false",

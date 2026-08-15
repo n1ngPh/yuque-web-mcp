@@ -1571,6 +1571,7 @@ function testConfig(
     loginTtlSeconds: 300,
     changeTtlSeconds: 600,
     requestTimeoutMs: 5_000,
+    writeConsistencyMode: "best_effort",
     allowUnverifiedContracts: false,
   };
 }

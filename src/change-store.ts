@@ -467,6 +467,11 @@ export class ChangeStore {
         "confirmation_text must exactly match the full path returned by Preview",
       );
     }
+    if (this.config.writeConsistencyMode !== "best_effort") {
+      throw new Error(
+        "Remote Confirm is blocked by strict write consistency mode; create a new Preview after the deployment owner explicitly enables best_effort for an exact knowledge-base allowlist",
+      );
+    }
     if (payload.kind === "update_sheet_chart") {
       throw new Error(
         "Chart Confirm is disabled; cancel this local Preview. No remote write was attempted.",

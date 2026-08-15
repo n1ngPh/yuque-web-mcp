@@ -433,6 +433,7 @@ function testConfig(
     loginTtlSeconds: 300,
     changeTtlSeconds: 600,
     requestTimeoutMs: 30,
+    writeConsistencyMode: "best_effort",
     allowUnverifiedContracts: false,
   };
 }

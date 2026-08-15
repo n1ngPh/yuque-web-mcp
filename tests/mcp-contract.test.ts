@@ -8,7 +8,7 @@ import {
 } from "../src/mcp.js";
 
 describe("MCP public surface", () => {
-  it("exposes exactly the 29 v0.3 tools with destructive tools explicit", async () => {
+  it("exposes exactly the 30 v0.3.1 tools with capability discovery", async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const server = createMcpServer("employee.a", {} as never);
@@ -27,12 +27,13 @@ describe("MCP public surface", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual(
       toolDefinitions.map((tool) => tool.name),
     );
-    expect(result.tools).toHaveLength(29);
+    expect(result.tools).toHaveLength(30);
     expect(result.tools.some((tool) => tool.name === "yuque_list_scopes")).toBe(
       true,
     );
     expect(result.tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
+        "yuque_get_capabilities",
         "yuque_get_book",
         "yuque_list_book_collaborators",
         "yuque_preview_create_book",
@@ -215,6 +216,17 @@ describe("MCP public surface", () => {
       toolDefinitions.some((tool) => tool.name === "set_active_scope"),
     ).toBe(false);
     expect(invalidScope.isError).toBe(true);
+    const invalidText = (
+      invalidScope as { content: Array<{ type: string; text?: string }> }
+    ).content[0]?.text;
+    expect(JSON.parse(invalidText ?? "{}")).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_argument",
+        retriable: false,
+        relogin_required: false,
+      },
+    });
 
     await client.close();
     await server.close();

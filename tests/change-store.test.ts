@@ -24,6 +24,44 @@ afterEach(async () => {
 });
 
 describe("single-owner safe change store", () => {
+  it("keeps every remote Confirm previewed in strict mode", async () => {
+    const fixture = await createFixture();
+    fixture.config.writeConsistencyMode = "strict";
+    const current = doc('<p data-lake-id="a">body</p>', "body");
+    let writes = 0;
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      docClient(
+        () => current,
+        undefined,
+        () => {
+          writes += 1;
+        },
+      ),
+    );
+    const preview = await changes.previewUpdate("employee.a", {
+      docUrl: DOC_URL,
+      mode: "rename",
+      newTitle: "strict-preview-only",
+    });
+
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+        true,
+      ),
+    ).rejects.toThrow("strict write consistency mode");
+    expect(writes).toBe(0);
+    expect(fixture.db.getPendingChange(preview.change_token)?.state).toBe(
+      "previewed",
+    );
+    fixture.db.close();
+  });
+
   it("applies a native Lake append once and preserves untouched bytes", async () => {
     const fixture = await createFixture();
     const untouched = '<h2 data-lake-id="other">Other</h2><p>keep exact</p>';
@@ -603,6 +641,7 @@ function testConfig(dataDir: string): AppConfig {
     loginTtlSeconds: 300,
     changeTtlSeconds: 600,
     requestTimeoutMs: 1_000,
+    writeConsistencyMode: "best_effort",
     allowUnverifiedContracts: false,
   };
 }

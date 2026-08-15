@@ -14,11 +14,11 @@
 | 文档搜索、完整路径与 URL 消歧 | 可用 |
 | 普通文档正文、版本、指纹和富内容类型读取 | 可用 |
 | LakeSheet 工作表、A1 范围、值、公式、基础格式和部分图表信息读取 | 可用 |
-| 文档与表格的结构化 Diff、预览、快照和冲突检查 | 已实现基础框架 |
-| 文档/表格远程写入 | 仅开放已验证契约；其余安全关闭 |
+| 文档与表格的结构化 Diff、预览、快照和冲突检查 | 可用 |
+| 文档/表格远程写入 | 默认`strict`只预览；部署者可显式启用受门禁的`best_effort` |
 | 知识库、协作者和整对象删除 | 工具框架已提供，默认关闭且未验证能力不会执行 |
 
-服务目前注册 29 个 MCP 工具。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回明确的兼容性错误。
+服务目前注册30个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
 
 ## 数据安全
 
@@ -28,6 +28,7 @@
 - `MCP_BEARER_TOKEN` 和 `SESSION_ENCRYPTION_KEY` 只保存在本地私密环境文件中，不应提交到 Git、截图或通过聊天发送。
 - 远程部署必须使用 HTTPS 或受保护的内网传输；Bearer Token 不能在不可信网络中通过明文 HTTP 发送。
 - 权限变更和整对象删除默认关闭，并可用精确知识库白名单进一步限制写入范围。
+- 写入一致性默认使用`strict`，缺少可靠并发保护时只生成Preview，不发送远程请求。
 - 登录完成后临时 Chromium 会话会关闭，日常业务请求不依赖持续运行的可视化浏览器。
 
 ## 环境要求
@@ -87,6 +88,7 @@ npm run local:start
 ## 常用工具
 
 - 认证：`yuque_auth_status`、`yuque_login_begin`、`yuque_login_status`、`yuque_logout`
+- 能力：`yuque_get_capabilities`
 - 空间与知识库：`yuque_list_scopes`、`yuque_list_books`、`yuque_get_book`
 - 定位与搜索：`yuque_search`、`yuque_get_toc`、`yuque_list_docs`、`yuque_list_all_docs`
 - 文档与表格：`yuque_get_doc`、`yuque_get_sheet`
@@ -94,6 +96,16 @@ npm run local:start
 - 快照：`yuque_list_snapshots`、`yuque_preview_restore_snapshot`
 
 回答文档、目录或表格问题时，调用方应先展示完整路径和 URL。同名结果必须列出所有候选，确认目标后再读取或修改。
+
+## 写入一致性
+
+默认配置为：
+
+```text
+WRITE_CONSISTENCY_MODE=strict
+```
+
+`strict`模式允许读取和Preview，但会在发包前阻止缺少可靠并发保护的远程Confirm。部署者只有在接受语雀网页接口不存在原子CAS的限制后，才可显式设置`best_effort`；该模式仍然受版本/指纹重读、一次性Change Token、契约`liveWriteEnabled`、精确知识库白名单、加密快照和写后回读约束，不会绕过未验证接口门禁。
 
 ## Docker
 

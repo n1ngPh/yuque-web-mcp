@@ -1,5 +1,15 @@
-const baseUrl = process.env.MCP_URL || "http://127.0.0.1:18080/mcp";
-const token = process.env.MCP_BEARER_TOKEN;
+import { readFile } from "node:fs/promises";
+
+const fileEnvironment = process.env.MCP_ENV_FILE
+  ? parseEnvironment(await readFile(process.env.MCP_ENV_FILE, "utf8"))
+  : {};
+const publicBaseUrl =
+  process.env.PUBLIC_BASE_URL || fileEnvironment.PUBLIC_BASE_URL;
+const baseUrl =
+  process.env.MCP_URL ||
+  (publicBaseUrl ? `${publicBaseUrl.replace(/\/$/, "")}/mcp` : undefined) ||
+  "http://127.0.0.1:18080/mcp";
+const token = process.env.MCP_BEARER_TOKEN || fileEnvironment.MCP_BEARER_TOKEN;
 if (!token) throw new Error("MCP_BEARER_TOKEN is required");
 
 const headers = {
@@ -47,16 +57,40 @@ const list = await fetch(baseUrl, {
 if (!list.ok) throw new Error(`tools/list failed: ${list.status}`);
 const payload = await mcpPayload(list);
 const count = payload.result?.tools?.length;
-if (count !== 29)
-  throw new Error(`expected 29 tools, received ${String(count)}`);
+if (count !== 30)
+  throw new Error(`expected 30 tools, received ${String(count)}`);
 const allDocs = payload.result?.tools?.find(
   (tool) => tool.name === "yuque_list_all_docs",
 );
 if (!allDocs?.description?.includes("offset+limit")) {
   throw new Error("tools/list is missing the document pagination guidance");
 }
+const capabilityResponse = await fetch(baseUrl, {
+  method: "POST",
+  headers: { ...headers, "Mcp-Session-Id": sessionId },
+  body: JSON.stringify({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "yuque_get_capabilities", arguments: {} },
+  }),
+});
+if (!capabilityResponse.ok) {
+  throw new Error(
+    `yuque_get_capabilities failed: ${capabilityResponse.status}`,
+  );
+}
+const capabilityPayload = await mcpPayload(capabilityResponse);
+const capabilityText = capabilityPayload.result?.content?.[0]?.text;
+const capabilityReport = JSON.parse(capabilityText || "null");
+if (
+  capabilityReport?.server_version !== "0.3.1" ||
+  !["strict", "best_effort"].includes(capabilityReport?.write_consistency_mode)
+) {
+  throw new Error("Capability Registry response is missing or incompatible");
+}
 process.stdout.write(
-  `${JSON.stringify({ status: "ok", tool_count: count, instructions: "present" })}\n`,
+  `${JSON.stringify({ status: "ok", tool_count: count, instructions: "present", write_consistency_mode: capabilityReport.write_consistency_mode })}\n`,
 );
 
 async function mcpPayload(response) {
@@ -67,4 +101,15 @@ async function mcpPayload(response) {
     ?.slice(5)
     .trim();
   return JSON.parse(dataLine || text);
+}
+
+function parseEnvironment(serialized) {
+  const values = {};
+  for (const line of serialized.split(/\r?\n/)) {
+    if (!line || line.trimStart().startsWith("#")) continue;
+    const separator = line.indexOf("=");
+    if (separator < 1) continue;
+    values[line.slice(0, separator)] = line.slice(separator + 1);
+  }
+  return values;
 }
