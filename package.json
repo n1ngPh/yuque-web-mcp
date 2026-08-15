@@ -1,6 +1,6 @@
 {
   "name": "yuque-web-mcp",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "Secure self-hosted MCP server for Yuque web sessions",
   "type": "module",

@@ -77,7 +77,12 @@ describe("web endpoint contracts", () => {
     expect(create?.observedHostTypes).toEqual(["personal"]);
     expect(create?.verifiedHostTypes).toEqual(["personal"]);
     expect(create?.verified).toBe(true);
-    expect(create?.liveWriteEnabled).toBe(false);
+    expect(create?.liveWriteEnabled).toBe(true);
+    expect(registry.getWritable("initialize_sheet", "personal")).toMatchObject({
+      method: "PUT",
+      path: "/api/docs/{docId}/content",
+      liveWriteEnabled: true,
+    });
     expect(save?.observedHostTypes).toContain("personal");
     expect(save).toMatchObject({
       verified: true,
@@ -89,9 +94,11 @@ describe("web endpoint contracts", () => {
       verified: true,
       deletionEffect: "content",
     });
-    expect(() => registry.getWritable("create_sheet", "personal")).toThrow(
-      "remains disabled",
-    );
+    expect(registry.getWritable("create_sheet", "personal")).toMatchObject({
+      method: "POST",
+      path: "/api/docs",
+      liveWriteEnabled: true,
+    });
     expect(() =>
       registry.getWritable("save_sheet_content", "personal"),
     ).toThrow("remains disabled");

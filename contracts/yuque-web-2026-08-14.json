@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-16-personal-collaboration-46",
+  "version": "2026-08-16-personal-create-47",
   "verifiedAt": "2026-08-16T00:00:00.000Z",
   "sourceBundles": [
     {
@@ -447,7 +447,7 @@
       "verified": true,
       "observedHostTypes": ["personal"],
       "verifiedHostTypes": ["personal"],
-      "liveWriteEnabled": false,
+      "liveWriteEnabled": true,
       "method": "POST",
       "path": "/api/docs",
       "idempotent": false,
@@ -458,7 +458,8 @@
         "data.book_id",
         "data.format",
         "data.type"
-      ]
+      ],
+      "notes": "Personal UI capture, browser-closed one-shot replay and full MCP strict/best_effort acceptance verified root Doc creation. Preview checks exact parent path, duplicate title and random fixed slug; Confirm sends one POST, reads back catalog path, Lake body, version and fingerprint, and the token is single-use."
     },
     {
       "capability": "mount_catalog_node",
@@ -515,7 +516,7 @@
       "verified": true,
       "observedHostTypes": ["personal"],
       "verifiedHostTypes": ["personal"],
-      "liveWriteEnabled": false,
+      "liveWriteEnabled": true,
       "method": "POST",
       "path": "/api/docs",
       "idempotent": false,
@@ -526,7 +527,25 @@
         "data.book_id",
         "data.format",
         "data.type"
-      ]
+      ],
+      "notes": "Personal UI evidence, browser-closed one-shot replay and full MCP strict/best_effort acceptance verified root Sheet creation. The create contract only creates and mounts the empty Sheet; first-worksheet initialization is isolated behind initialize_sheet."
+    },
+    {
+      "capability": "initialize_sheet",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "liveWriteEnabled": true,
+      "method": "PUT",
+      "path": "/api/docs/{docId}/content",
+      "deletionEffect": "content",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.draft_version",
+        "data.body_draft"
+      ],
+      "notes": "A newly created empty personal Sheet was initialized exactly once through the MCP creation state machine, then read back at version 1 with one empty worksheet and the expected semantic fingerprint. This gate is not reused for ordinary Sheet updates."
     },
     {
       "capability": "save_sheet_content",

@@ -1170,6 +1170,14 @@ export class YuqueWebClient {
     );
   }
 
+  assertSheetInitializeEnabled(targetUrl?: string): void {
+    this.assertWriteTargetAllowed(targetUrl);
+    this.contracts.getWritable(
+      "initialize_sheet",
+      this.contractHostTypeForTarget(targetUrl),
+    );
+  }
+
   assertSheetUpdateEnabled(targetUrl?: string): void {
     this.assertWriteTargetAllowed(targetUrl);
     this.contracts.getWritable(
@@ -1776,7 +1784,7 @@ export class YuqueWebClient {
         });
       }
       try {
-        await this.updateSheetDraft(employeeId, {
+        await this.initializeSheetDraft(employeeId, {
           docId: verified.id,
           draftVersion: verified.version,
           bodyDraft: encoded.bodyDraft,
@@ -1849,7 +1857,33 @@ export class YuqueWebClient {
     },
   ): Promise<unknown> {
     this.assertSheetUpdateEnabled(input.referer);
-    return this.request(employeeId, "save_sheet_content", {
+    return this.writeSheetDraft(employeeId, "save_sheet_content", input);
+  }
+
+  async initializeSheetDraft(
+    employeeId: string,
+    input: {
+      docId: string;
+      draftVersion: number;
+      bodyDraft: string;
+      referer: string;
+    },
+  ): Promise<unknown> {
+    this.assertSheetInitializeEnabled(input.referer);
+    return this.writeSheetDraft(employeeId, "initialize_sheet", input);
+  }
+
+  private async writeSheetDraft(
+    employeeId: string,
+    capability: "initialize_sheet" | "save_sheet_content",
+    input: {
+      docId: string;
+      draftVersion: number;
+      bodyDraft: string;
+      referer: string;
+    },
+  ): Promise<unknown> {
+    return this.request(employeeId, capability, {
       pathParams: { docId: input.docId },
       body: {
         body_asl: input.bodyDraft,

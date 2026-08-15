@@ -46,6 +46,7 @@ export type CapabilityName =
   | "publish_doc"
   | "update_doc_meta"
   | "create_sheet"
+  | "initialize_sheet"
   | "save_sheet_content"
   | "delete_sheet"
   | "get_book"

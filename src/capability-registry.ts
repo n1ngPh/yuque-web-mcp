@@ -67,7 +67,7 @@ export function buildCapabilityReport(
 ): Record<string, unknown> {
   const bestEffort = config.writeConsistencyMode === "best_effort";
   return {
-    server_version: "0.3.2",
+    server_version: "0.3.3",
     registry_version: 1,
     contract_version: contracts.manifest.version,
     contract_verified_at: contracts.manifest.verifiedAt,
@@ -80,11 +80,19 @@ export function buildCapabilityReport(
     },
     capabilities: CAPABILITY_POLICIES.map((policy): CapabilityStatus => {
       if (policy.tool === "yuque_confirm_change") {
+        if (bestEffort) {
+          const { reasonCode: _reasonCode, ...enabledPolicy } = policy;
+          return {
+            ...enabledPolicy,
+            availability: "available",
+            required_write_mode: "best_effort",
+          };
+        }
         return {
           ...policy,
-          availability: bestEffort ? "available" : "preview_only",
-          required_write_mode: bestEffort ? "best_effort" : "strict",
-          ...(bestEffort ? {} : { reasonCode: "strict_mode_default" }),
+          availability: "preview_only",
+          required_write_mode: "strict",
+          reasonCode: "strict_mode_default",
         };
       }
       if (policy.tool === "yuque_preview_change_book_collaborator") {

@@ -32,6 +32,7 @@ export class PinnedLakeHtmlRenderer implements LakeHtmlRenderer {
         PERSONAL_LAKE_COMPARE: "0",
         LAKE_RESEARCH_BUNDLE_MANIFEST: "",
         LAKE_RESEARCH_NODE_MODULES: "",
+        YUQUE_LIVE_TEST_SUPPRESS_SUMMARY: "1",
       },
       stdio: ["pipe", "pipe", "ignore"],
     });

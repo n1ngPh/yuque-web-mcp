@@ -304,7 +304,7 @@ export class ChangeStore {
       },
       diff,
       [
-        "Creation will remain disabled until POST /api/docs and catalog mounting pass an independent browser-closed replay.",
+        "Creation uses one non-idempotent POST, exact slug/path reconciliation and write read-back; unknown results must not be retried.",
       ],
     );
   }
@@ -455,7 +455,7 @@ export class ChangeStore {
       },
       sheetDiffText(applied.diff, operations),
       [
-        "Sheet creation and first-worksheet initialization are replay-verified, but Confirm remains disabled until real timeout, concurrency and full MCP acceptance gates pass.",
+        "Sheet creation and first-worksheet initialization use separate verified contracts; either uncertain step returns a non-retriable partial or unknown result for reconciliation.",
       ],
       sheetDiffStats(applied.diff),
     );

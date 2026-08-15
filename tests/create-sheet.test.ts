@@ -376,7 +376,7 @@ function createContract(): Record<string, unknown> {
         requiredResponsePaths: [],
       },
       {
-        capability: "save_sheet_content",
+        capability: "initialize_sheet",
         verified: true,
         verifiedHostTypes: ["personal"],
         liveWriteEnabled: true,

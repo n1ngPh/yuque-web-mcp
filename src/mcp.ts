@@ -936,7 +936,7 @@ async function callTool(
     case "yuque_preview_create_doc":
       return deps.changes.previewCreate(employeeId, {
         bookUrl: requireString(args, "book_url"),
-        parentUuid: requireString(args, "parent_uuid"),
+        parentUuid: requireStringIncludingEmpty(args, "parent_uuid"),
         expectedParentPath: requireString(args, "parent_display_path"),
         title: requireString(args, "title"),
         markdown: requireString(args, "markdown"),
@@ -982,7 +982,7 @@ async function callTool(
     case "yuque_preview_create_sheet":
       return deps.changes.previewCreateSheet(employeeId, {
         bookUrl: requireString(args, "book_url"),
-        parentUuid: requireString(args, "parent_uuid"),
+        parentUuid: requireStringIncludingEmpty(args, "parent_uuid"),
         expectedParentPath: requireString(args, "parent_display_path"),
         title: requireString(args, "title"),
         worksheets: requireArray(args, "worksheets"),
@@ -1101,6 +1101,15 @@ function requireString(args: Record<string, unknown>, name: string): string {
   const value = args[name];
   if (typeof value !== "string" || !value.trim())
     throw new Error(`${name} is required`);
+  return value;
+}
+
+function requireStringIncludingEmpty(
+  args: Record<string, unknown>,
+  name: string,
+): string {
+  const value = args[name];
+  if (typeof value !== "string") throw new Error(`${name} is required`);
   return value;
 }
 
