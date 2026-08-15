@@ -31,8 +31,9 @@ describe("QR login provider boundary", () => {
     expect(html).toContain("隐私与加密安全");
     expect(html).toContain("AES-256-GCM 加密保存");
     expect(html).toContain("每个账号的登录数据相互隔离");
-    expect(html).toContain("只支持已注册的账号进行扫描登录");
-    expect(html).toContain("绑定手机号并输入短信验证码");
+    expect(html).toContain("个人空间扫码要求账号已注册并已绑定手机号");
+    expect(html).toContain("企业或组织空间能够通过钉钉登录");
+    expect(html).toContain("不代表个人空间账号已经完成手机号绑定");
     expect(html).toContain('id="login-flow" class="flow"');
     expect(html).toContain('id="refresh-qr"');
     expect(html).toContain("刷新二维码");
