@@ -81,8 +81,10 @@ describe("Streamable HTTP single-owner boundary", () => {
     const port = await availablePort();
     const config = testConfig(dataDir, port);
     const app = await createApplication(config);
-    vi.spyOn(app.login, "pageByPublicCode").mockReturnValue(
-      "<!doctype html><title>语雀登录</title>",
+    vi.spyOn(app.login, "pageByPublicCode").mockImplementation((code) =>
+      code === "test-code"
+        ? "<!doctype html><title>语雀登录</title>"
+        : undefined,
     );
     const interact = vi
       .spyOn(app.login, "selectProviderByPublicCode")
@@ -100,6 +102,17 @@ describe("Streamable HTTP single-owner boundary", () => {
       expect(page.headers.get("x-frame-options")).toBe("DENY");
       expect(page.headers.get("permissions-policy")).toContain("camera=()");
       expect(await page.text()).toContain("语雀登录");
+
+      const expired = await fetch(
+        `http://127.0.0.1:${port}/login/expired-code`,
+      );
+      expect(expired.status).toBe(410);
+      expect(expired.headers.get("content-type")).toContain("text/html");
+      expect(expired.headers.get("cache-control")).toBe("no-store");
+      expect(expired.headers.get("content-security-policy")).toContain(
+        "default-src 'none'",
+      );
+      expect(await expired.text()).toContain("登录链接已失效");
 
       const missingOrigin = await postLoginProvider(url, undefined, {
         provider: "dingtalk",

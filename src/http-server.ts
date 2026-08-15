@@ -136,8 +136,7 @@ function handleLoginRoute(
     if (request.method !== "GET")
       return sendJson(response, 405, { error: "Method Not Allowed" });
     const html = app.login.pageByPublicCode(code);
-    if (!html)
-      return sendJson(response, 404, { error: "Login link not found" });
+    if (!html) return sendExpiredLoginPage(response);
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
@@ -308,6 +307,40 @@ function sendJson(
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(body));
+}
+
+function sendExpiredLoginPage(response: ServerResponse): void {
+  response.writeHead(410, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy":
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; style-src 'unsafe-inline'",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(`<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>登录链接已失效</title>
+  <style>
+    :root{color-scheme:light dark;font-family:ui-sans-serif,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+    body{min-height:100vh;margin:0;display:grid;place-items:center;background:#f5f7fb;color:#182230}
+    main{width:min(32rem,calc(100% - 3rem));box-sizing:border-box;padding:2rem;border:1px solid #dfe4ec;border-radius:1rem;background:#fff;box-shadow:0 1rem 3rem rgba(18,32,56,.08)}
+    h1{margin:0 0 .75rem;font-size:1.5rem}p{margin:.5rem 0;line-height:1.7;color:#526071}.hint{margin-top:1.25rem;padding:.8rem 1rem;border-radius:.65rem;background:#f0f4fa;color:#334155}
+    @media(prefers-color-scheme:dark){body{background:#111827;color:#f8fafc}main{background:#1f2937;border-color:#374151}p{color:#cbd5e1}.hint{background:#273449;color:#e2e8f0}}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>登录链接已失效</h1>
+    <p>这是一次性扫码登录链接，默认有效期为5分钟，过期后不会继续保留二维码或登录页面。</p>
+    <p class="hint">请返回智能体重新调用 yuque_login_begin，获取新的扫码登录链接。</p>
+  </main>
+</body>
+</html>`);
 }
 
 function sendMcpError(
