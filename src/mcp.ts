@@ -947,7 +947,11 @@ async function callTool(
         description: optionalString(args, "description"),
       });
     case "yuque_preview_update_book":
-      return v03CapabilityBlocked("update_book");
+      return deps.changes.previewUpdateBook(employeeId, {
+        bookUrl: requireString(args, "book_url"),
+        name: optionalString(args, "name"),
+        description: optionalString(args, "description"),
+      });
     case "yuque_preview_change_book_collaborator":
       return v03CapabilityBlocked("change_book_collaborator");
     case "yuque_preview_delete_doc":

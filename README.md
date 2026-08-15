@@ -16,6 +16,7 @@
 | LakeSheet 工作表、A1 范围、值、公式、基础格式和部分图表信息读取 | 可用                                                         |
 | 文档与表格的结构化 Diff、预览、快照和冲突检查                   | 可用                                                         |
 | 私有个人知识库创建                                              | 已验证；默认`strict`只预览，`best_effort`可确认并回读最终URL |
+| 私有个人知识库名称与描述修改                                    | 已验证；只发送变更字段，默认`strict`只预览                   |
 | 文档/表格远程写入                                               | 默认`strict`只预览；部署者可显式启用受门禁的`best_effort`    |
 | 知识库、协作者和整对象删除                                      | 工具框架已提供，默认关闭且未验证能力不会执行                 |
 
@@ -90,7 +91,7 @@ npm run local:start
 
 - 认证：`yuque_auth_status`、`yuque_login_begin`、`yuque_login_status`、`yuque_logout`
 - 能力：`yuque_get_capabilities`
-- 空间与知识库：`yuque_list_scopes`、`yuque_list_books`、`yuque_get_book`
+- 空间与知识库：`yuque_list_scopes`、`yuque_list_books`、`yuque_get_book`、`yuque_preview_create_book`、`yuque_preview_update_book`
 - 定位与搜索：`yuque_search`、`yuque_get_toc`、`yuque_list_docs`、`yuque_list_all_docs`
 - 文档与表格：`yuque_get_doc`、`yuque_get_sheet`
 - 变更流程：各类 `yuque_preview_*`、`yuque_confirm_change`、`yuque_cancel_change`

@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-16-personal-book-create-44",
+  "version": "2026-08-16-personal-book-update-45",
   "verifiedAt": "2026-08-16T00:00:00.000Z",
   "sourceBundles": [],
   "endpoints": [
@@ -80,6 +80,42 @@
             "type=Book, public=0 and extend_private=0",
             "422 validation error left the resource set unchanged",
             "response and list read-back matched without organization requests"
+          ]
+        }
+      ]
+    },
+    {
+      "capability": "update_book",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "PUT",
+      "path": "/api/books/{bookId}",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.name",
+        "data.description",
+        "data.slug",
+        "data.public",
+        "data.user_id",
+        "data.organization_id"
+      ],
+      "verifiedScenarios": [
+        {
+          "id": "private_personal_book_name_description_update",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 7,
+          "retryAttempts": 0,
+          "browserStarts": 3,
+          "deleteRequests": 0,
+          "constraints": [
+            "UI capture verified PUT name and full settings payload shapes",
+            "minimal HTTP replay verified independent name-only and description-only payloads",
+            "browser settings emitted an unrelated cover upload, which MCP intentionally omits",
+            "all probe values were restored and list read-back matched without organization requests"
           ]
         }
       ]

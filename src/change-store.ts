@@ -131,6 +131,61 @@ export class ChangeStore {
     );
   }
 
+  async previewUpdateBook(
+    ownerId: string,
+    input: { bookUrl: string; name?: string; description?: string },
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    const prepared = await this.client.preparePersonalBookUpdate(
+      ownerId,
+      input,
+    );
+    const before = [
+      `name: ${prepared.book.name}`,
+      `description: ${prepared.book.description || "(empty)"}`,
+    ].join("\n");
+    const after = [
+      `name: ${prepared.name}`,
+      `description: ${prepared.description || "(empty)"}`,
+    ].join("\n");
+    const changedFields =
+      Number(prepared.name !== prepared.book.name) +
+      Number(prepared.description !== prepared.book.description);
+    const diff = createTwoFilesPatch(
+      prepared.book.name,
+      prepared.name,
+      before,
+      after,
+      prepared.book.updatedAt || "baseline",
+      "proposed",
+    );
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "update_book",
+        targetUrl: prepared.book.url,
+        displayPath: prepared.displayPath,
+        bookId: prepared.book.id,
+        bookName: prepared.name,
+        bookDescription: prepared.description,
+        bookVisibility: "private",
+        ownerLogin: prepared.book.ownerLogin,
+        baseFingerprint: prepared.baselineFingerprint,
+        resourceType: "KnowledgeBase",
+      },
+      diff,
+      [
+        "Knowledge-base updates have no verified atomic CAS; strict mode remains Preview-only and best_effort must be enabled with an exact knowledge-base allowlist.",
+        "Confirm sends only the changed name/description fields and intentionally omits cover upload and unrelated settings.",
+      ],
+      {
+        added_lines: changedFields,
+        removed_lines: changedFields,
+        has_deletions: false,
+      },
+    );
+  }
+
   async previewCreate(
     ownerId: string,
     input: {
@@ -631,6 +686,28 @@ export class ChangeStore {
       return {
         state: "succeeded",
         result: { ...created },
+      };
+    }
+    if (payload.kind === "update_book") {
+      if (
+        !payload.targetUrl ||
+        !payload.bookName ||
+        payload.bookDescription === undefined ||
+        !payload.baseFingerprint ||
+        payload.bookVisibility !== "private" ||
+        !payload.ownerLogin
+      ) {
+        throw new Error("Stored knowledge-base update is incomplete");
+      }
+      const updated = await this.client.updatePersonalBook(ownerId, {
+        bookUrl: payload.targetUrl,
+        name: payload.bookName,
+        description: payload.bookDescription,
+        baselineFingerprint: payload.baseFingerprint,
+      });
+      return {
+        state: "succeeded",
+        result: { ...updated },
       };
     }
     if (payload.kind === "create_doc") {

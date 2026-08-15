@@ -103,6 +103,7 @@ export interface ResourceLockState {
 export interface NormalizedBook {
   id: number;
   name: string;
+  description: string;
   slug: string;
   groupLogin: string;
   url: string;
@@ -117,6 +118,7 @@ export interface NormalizedBook {
   ownerLogin: string;
   accessType: "owner" | "collaborator";
   role?: "owner" | "reader" | "editor";
+  private: boolean;
   updatedAt?: string;
 }
 
@@ -226,6 +228,25 @@ export interface CreatedBookResult {
   bookUrl: string;
   displayPath: string;
   private: true;
+  reconciledAfterUnknownResponse: boolean;
+}
+
+export interface PreparedBookUpdate {
+  book: NormalizedBook;
+  name: string;
+  description: string;
+  baselineFingerprint: string;
+  displayPath: string;
+}
+
+export interface UpdatedBookResult {
+  status: "updated";
+  id: string;
+  name: string;
+  description: string;
+  bookUrl: string;
+  displayPath: string;
+  fingerprint: string;
   reconciledAfterUnknownResponse: boolean;
 }
 
@@ -845,6 +866,11 @@ export class YuqueWebClient {
     this.contracts.getWritable("create_book", "personal");
   }
 
+  assertBookUpdateEnabled(targetUrl: string): void {
+    this.assertWriteTargetAllowed(targetUrl);
+    this.contracts.getWritable("update_book", "personal");
+  }
+
   async preparePersonalBookCreate(
     employeeId: string,
     name: string,
@@ -960,6 +986,142 @@ export class YuqueWebClient {
       bookUrl: `${this.config.personalYuqueHost}/${encodeURIComponent(prepared.ownerLogin)}/${encodeURIComponent(createdSlug)}`,
       displayPath: prepared.displayPath,
       private: true,
+      reconciledAfterUnknownResponse,
+    };
+  }
+
+  async preparePersonalBookUpdate(
+    employeeId: string,
+    input: { bookUrl: string; name?: string; description?: string },
+  ): Promise<PreparedBookUpdate> {
+    this.assertWriteTargetAllowed(input.bookUrl);
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+    const book = await this.resolveBook(employeeId, input.bookUrl);
+    if (
+      book.scopeType !== "personal" ||
+      book.ownerLogin !== session.account.login ||
+      book.accessType !== "owner" ||
+      !book.private
+    ) {
+      throw new ContractError(
+        "Knowledge-base update is verified only for a private personal knowledge base owned by the current account",
+      );
+    }
+    const name = input.name?.trim() ?? book.name;
+    const description = input.description?.trim() ?? book.description;
+    if (!name) throw new Error("Knowledge-base name is required");
+    if (name.length > 100) {
+      throw new Error("Knowledge-base name must not exceed 100 characters");
+    }
+    if (description.length > 2_000) {
+      throw new Error(
+        "Knowledge-base description must not exceed 2000 characters",
+      );
+    }
+    if (name === book.name && description === book.description) {
+      throw new Error("Knowledge-base update does not change any field");
+    }
+    if (name !== book.name) {
+      const books = await this.listAllBooks(employeeId, "personal");
+      if (
+        books.some(
+          (candidate) => candidate.id !== book.id && candidate.name === name,
+        )
+      ) {
+        throw new ContractError(
+          "A personal knowledge base with the same name already exists",
+        );
+      }
+    }
+    return {
+      book,
+      name,
+      description,
+      baselineFingerprint: bookFingerprint(book),
+      displayPath: `${book.scopeLabel} / ${book.name}`,
+    };
+  }
+
+  async updatePersonalBook(
+    employeeId: string,
+    input: {
+      bookUrl: string;
+      name: string;
+      description: string;
+      baselineFingerprint: string;
+    },
+  ): Promise<UpdatedBookResult> {
+    this.assertBookUpdateEnabled(input.bookUrl);
+    const prepared = await this.preparePersonalBookUpdate(employeeId, input);
+    if (prepared.baselineFingerprint !== input.baselineFingerprint) {
+      throw new ContractError(
+        "Knowledge base changed after Preview; no write was attempted",
+      );
+    }
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+    const body: Record<string, string> = {};
+    if (prepared.name !== prepared.book.name) body.name = prepared.name;
+    if (prepared.description !== prepared.book.description) {
+      body.description = prepared.description;
+    }
+    let reconciledAfterUnknownResponse = false;
+    try {
+      const updated = asRecord(
+        await this.request(employeeId, "update_book", {
+          pathParams: { bookId: prepared.book.id },
+          body,
+          baseHost: prepared.book.host,
+          referer: prepared.book.url,
+        }),
+        "Updated knowledge-base response",
+      );
+      if (
+        updated.id !== prepared.book.id ||
+        updated.name !== prepared.name ||
+        updated.description !== prepared.description ||
+        updated.slug !== prepared.book.slug ||
+        updated.user_id !== Number(session.account.id) ||
+        updated.organization_id !== 0 ||
+        updated.public !== 0
+      ) {
+        throw new ContractError(
+          "Updated knowledge-base response does not match the Preview",
+        );
+      }
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      const reconciled = await this.resolveBook(employeeId, input.bookUrl);
+      if (
+        reconciled.name !== prepared.name ||
+        reconciled.description !== prepared.description
+      ) {
+        throw error;
+      }
+      reconciledAfterUnknownResponse = true;
+    }
+    const verified = await this.resolveBook(employeeId, input.bookUrl);
+    if (
+      verified.id !== prepared.book.id ||
+      verified.name !== prepared.name ||
+      verified.description !== prepared.description ||
+      verified.slug !== prepared.book.slug ||
+      verified.ownerLogin !== session.account.login ||
+      !verified.private
+    ) {
+      throw new ContractError(
+        "Updated knowledge-base list read-back does not match the Preview",
+      );
+    }
+    return {
+      status: "updated",
+      id: String(verified.id),
+      name: verified.name,
+      description: verified.description,
+      bookUrl: verified.url,
+      displayPath: `${verified.scopeLabel} / ${verified.name}`,
+      fingerprint: bookFingerprint(verified),
       reconciledAfterUnknownResponse,
     };
   }
@@ -1870,6 +2032,7 @@ function normalizeBook(
   const user = asRecord(record.user, "Knowledge-base owner");
   const id = requireNumber(record, "id");
   const name = requireStringValue(record, "name");
+  const description = optionalStringValue(record.description) ?? "";
   const slug = requireStringValue(record, "slug");
   const groupLogin = requireStringValue(user, "login");
   const itemsCount = requireNumber(record, "items_count");
@@ -1893,9 +2056,11 @@ function normalizeBook(
   const scopeLabel =
     context.type === "personal" ? `个人：${scopeName}` : `空间：${scopeName}`;
   const updatedAt = optionalStringValue(record.updated_at);
+  const visibility = optionalNumber(record.public);
   return {
     id,
     name,
+    description,
     slug,
     groupLogin,
     url: `${host}/${encodeURIComponent(groupLogin)}/${encodeURIComponent(slug)}`,
@@ -1911,9 +2076,22 @@ function normalizeBook(
     ownerType,
     ownerLogin: groupLogin,
     accessType,
+    private: visibility === 0,
     ...(accessType === "owner" ? { role: "owner" as const } : {}),
     ...(updatedAt ? { updatedAt } : {}),
   };
+}
+
+function bookFingerprint(book: NormalizedBook): string {
+  return fingerprint({
+    id: book.id,
+    slug: book.slug,
+    ownerLogin: book.ownerLogin,
+    name: book.name,
+    description: book.description,
+    private: book.private,
+    updatedAt: book.updatedAt ?? null,
+  });
 }
 
 function normalizeBookCollaborator(
