@@ -189,6 +189,13 @@ function handleLoginRoute(
       return sendJson(response, 415, { error: "Unsupported Media Type" });
     return handleLoginProvider(code, request, response, app);
   }
+  if (suffix === "refresh") {
+    if (request.method !== "POST")
+      return sendJson(response, 405, { error: "Method Not Allowed" });
+    if (!passesLoginOriginGuard(request, response, app.config.publicBaseUrl))
+      return;
+    return handleLoginRefresh(code, response, app);
+  }
   return sendJson(response, 404, { error: "Not Found" });
 }
 
@@ -221,6 +228,19 @@ async function handleLoginProvider(
   if (result === "not_ready")
     return sendJson(response, 409, { error: "Login page is not ready" });
   return sendJson(response, 200, { status: "accepted" });
+}
+
+async function handleLoginRefresh(
+  code: string,
+  response: ServerResponse,
+  app: Application,
+): Promise<void> {
+  const result = await app.login.refreshByPublicCode(code);
+  if (result === "not_found")
+    return sendJson(response, 410, { error: "Login link expired" });
+  if (result === "not_ready")
+    return sendJson(response, 409, { error: "Login QR is not ready" });
+  return sendJson(response, 200, { status: "refreshed" });
 }
 
 function passesHostGuard(

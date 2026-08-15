@@ -89,6 +89,9 @@ describe("Streamable HTTP single-owner boundary", () => {
     const interact = vi
       .spyOn(app.login, "selectProviderByPublicCode")
       .mockResolvedValue("accepted");
+    const refresh = vi
+      .spyOn(app.login, "refreshByPublicCode")
+      .mockResolvedValue("accepted");
     const { server } = startHttpServer(app);
 
     try {
@@ -145,6 +148,18 @@ describe("Streamable HTTP single-owner boundary", () => {
       expect(interact).toHaveBeenCalledTimes(1);
       expect(interact).toHaveBeenCalledWith("test-code", "wechat");
 
+      const refreshed = await postLoginRefresh(url, config.publicBaseUrl);
+      expect(refreshed.status).toBe(200);
+      expect(await refreshed.json()).toEqual({ status: "refreshed" });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(refresh).toHaveBeenCalledWith("test-code");
+
+      const refreshWrongOrigin = await postLoginRefresh(
+        url,
+        "http://attacker.invalid",
+      );
+      expect(refreshWrongOrigin.status).toBe(403);
+
       const extraPath = await postLoginProvider(
         `${url}/extra`,
         config.publicBaseUrl,
@@ -171,6 +186,16 @@ function postLoginProvider(
       ...(origin ? { Origin: origin } : {}),
     },
     body: JSON.stringify(body),
+  });
+}
+
+function postLoginRefresh(
+  loginUrl: string,
+  origin: string | undefined,
+): Promise<Response> {
+  return fetch(`${loginUrl}/refresh`, {
+    method: "POST",
+    headers: origin ? { Origin: origin } : {},
   });
 }
 
