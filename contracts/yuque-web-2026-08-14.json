@@ -1,0 +1,353 @@
+{
+  "version": "2026-08-15-embedded-board-43",
+  "verifiedAt": "2026-08-15T04:39:24.000Z",
+  "sourceBundles": [],
+  "endpoints": [
+    {
+      "capability": "get_user",
+      "verified": false,
+      "method": "GET",
+      "path": "/api/mine/account",
+      "idempotent": true,
+      "requiredResponsePaths": []
+    },
+    {
+      "capability": "list_books",
+      "verified": true,
+      "verifiedHostTypes": ["organization"],
+      "method": "GET",
+      "path": "/api/mine/books",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "list_personal_books",
+      "verified": true,
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/mine/personal_books",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "list_user_books",
+      "verified": false,
+      "method": "GET",
+      "path": "/api/mine/user_books",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "list_book_collaborators",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/collaborations",
+      "idempotent": true,
+      "requiredResponsePaths": ["data", "meta.permission", "meta.total"]
+    },
+    {
+      "capability": "list_organizations",
+      "verified": true,
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/mine/organizations",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "get_organization_user",
+      "verified": true,
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/mine/organization_user",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "list_groups",
+      "verified": false,
+      "method": "GET",
+      "path": "/api/mine/groups",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "list_groups_all",
+      "verified": false,
+      "method": "GET",
+      "path": "/api/mine/groups_all",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "set_active_scope",
+      "verified": false,
+      "liveWriteEnabled": false,
+      "method": "PUT",
+      "path": "/api/mine/active",
+      "idempotent": false,
+      "requiredResponsePaths": []
+    },
+    {
+      "capability": "search",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "method": "GET",
+      "path": "/api/zsearch",
+      "idempotent": true,
+      "requiredResponsePaths": [
+        "data.hits",
+        "data.totalHits",
+        "data.info.scope"
+      ]
+    },
+    {
+      "capability": "get_toc",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "method": "GET",
+      "path": "/api/catalog_nodes",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "list_docs",
+      "verified": false,
+      "method": "GET",
+      "path": "/api/docs",
+      "idempotent": true,
+      "requiredResponsePaths": []
+    },
+    {
+      "capability": "get_doc",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "method": "GET",
+      "path": "/api/docs/{docSlug}",
+      "idempotent": true,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.title",
+        "data.slug",
+        "data.book_id",
+        "data.content",
+        "data.updated_at",
+        "data.draft_version"
+      ]
+    },
+    {
+      "capability": "get_doc_text",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "method": "GET",
+      "path": "/api/docs/{groupSlug}/{bookSlug}/{docSlug}/text",
+      "idempotent": true,
+      "requiredResponsePaths": ["data.title", "data.content"]
+    },
+    {
+      "capability": "get_doc_editor",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/docs/{docSlug}",
+      "idempotent": true,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.title",
+        "data.slug",
+        "data.book_id",
+        "data.type",
+        "data.format",
+        "data.body",
+        "data.body_asl",
+        "data.body_draft",
+        "data.body_draft_asl",
+        "data.draft_version",
+        "data.updated_at"
+      ]
+    },
+    {
+      "capability": "get_doc_lock",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/docs/{docId}/lock",
+      "idempotent": true,
+      "requiredResponsePaths": [
+        "data.doc.draft_version",
+        "data.doc.last_editor",
+        "data.doc.locker",
+        "data.doc.collab_members"
+      ]
+    },
+    {
+      "capability": "acquire_doc_lock",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "PUT",
+      "path": "/api/docs/{docId}/lock",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data.draft_version",
+        "data.last_editor",
+        "data.locker"
+      ],
+      "liveWriteEnabled": true
+    },
+    {
+      "capability": "release_doc_lock",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "DELETE",
+      "path": "/api/docs/{docId}/lock",
+      "deletionEffect": "none",
+      "idempotent": false,
+      "requiredResponsePaths": [],
+      "liveWriteEnabled": true
+    },
+    {
+      "capability": "get_sheet",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "method": "GET",
+      "path": "/api/docs/{docSlug}",
+      "idempotent": true,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.title",
+        "data.slug",
+        "data.type",
+        "data.book_id",
+        "data.format",
+        "data.body_draft",
+        "data.draft_version",
+        "data.updated_at"
+      ]
+    },
+    {
+      "capability": "convert_markdown",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "method": "POST",
+      "path": "/api/docs/convert",
+      "idempotent": false,
+      "requiredResponsePaths": ["data.content"]
+    },
+    {
+      "capability": "create_doc",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "liveWriteEnabled": false,
+      "method": "POST",
+      "path": "/api/docs",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.slug",
+        "data.title",
+        "data.book_id",
+        "data.format",
+        "data.type"
+      ]
+    },
+    {
+      "capability": "mount_catalog_node",
+      "verified": false,
+      "observedHostTypes": ["personal"],
+      "liveWriteEnabled": false,
+      "method": "PUT",
+      "path": "/api/catalog_nodes",
+      "idempotent": false,
+      "requiredResponsePaths": []
+    },
+    {
+      "capability": "update_doc",
+      "verified": false,
+      "method": "PUT",
+      "path": "/api/docs/{docId}",
+      "idempotent": false,
+      "requiredResponsePaths": []
+    },
+    {
+      "capability": "save_doc_content",
+      "verified": true,
+      "observedHostTypes": ["organization", "personal"],
+      "verifiedHostTypes": ["organization", "personal"],
+      "liveWriteEnabled": false,
+      "method": "PUT",
+      "path": "/api/docs/{docId}/content",
+      "deletionEffect": "content",
+      "idempotent": false,
+      "requiredResponsePaths": ["data.id", "data.draft_version"]
+    },
+    {
+      "capability": "publish_doc",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "liveWriteEnabled": false,
+      "method": "PUT",
+      "path": "/api/docs/{docId}/publish",
+      "idempotent": false,
+      "requiredResponsePaths": []
+    },
+    {
+      "capability": "update_doc_meta",
+      "verified": true,
+      "verifiedHostTypes": ["organization", "personal"],
+      "liveWriteEnabled": true,
+      "method": "PUT",
+      "path": "/api/docs/{docId}/meta",
+      "idempotent": false,
+      "requiredResponsePaths": ["data.id", "data.title"]
+    },
+    {
+      "capability": "create_sheet",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "liveWriteEnabled": false,
+      "method": "POST",
+      "path": "/api/docs",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.slug",
+        "data.title",
+        "data.book_id",
+        "data.format",
+        "data.type"
+      ]
+    },
+    {
+      "capability": "save_sheet_content",
+      "verified": true,
+      "observedHostTypes": ["organization", "personal"],
+      "verifiedHostTypes": ["personal"],
+      "liveWriteEnabled": false,
+      "method": "PUT",
+      "path": "/api/docs/{docId}/content",
+      "deletionEffect": "content",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.draft_version",
+        "data.body_draft"
+      ]
+    },
+    {
+      "capability": "logout",
+      "verified": false,
+      "method": "POST",
+      "path": "/api/accounts/logout",
+      "idempotent": false,
+      "requiredResponsePaths": []
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "name": "yuque-web-mcp",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Secure self-hosted MCP server for Yuque web sessions",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/n1ngPh/yuque-web-mcp.git"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
+    "check": "npm run format:check && npm run typecheck && npm test && npm run build",
+    "start": "node dist/src/index.js",
+    "admin": "node dist/src/admin.js",
+    "local:start": "node deploy/local.mjs serve",
+    "local:admin": "node deploy/local.mjs admin"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "better-sqlite3": "13.0.3",
+    "codemirror": "5.65.20",
+    "diff": "9.0.0",
+    "linkedom": "0.18.12",
+    "moment": "2.30.1",
+    "playwright-core": "1.62.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tough-cookie": "6.0.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.18.6",
+    "prettier": "3.9.6",
+    "tsx": "4.23.12",
+    "typescript": "5.9.2",
+    "vitest": "4.1.10"
+  }
+}

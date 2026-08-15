@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+.git
+.DS_Store
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+*.enc
+*.har
+*.png
+*.webm
+research-output
+runtime
