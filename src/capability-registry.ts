@@ -39,7 +39,11 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
   available("yuque_get_sheet", personalAndOrganization),
   available("yuque_preview_create_book", personal),
   available("yuque_preview_update_book", personal),
-  disabled("yuque_preview_change_book_collaborator", "contract_not_verified"),
+  previewOnly(
+    "yuque_preview_change_book_collaborator",
+    "permission_changes_disabled",
+    personal,
+  ),
   disabled("yuque_preview_delete_doc", "contract_not_verified"),
   disabled("yuque_preview_delete_sheet", "contract_not_verified"),
   disabled("yuque_preview_delete_book", "contract_not_verified"),
@@ -63,7 +67,7 @@ export function buildCapabilityReport(
 ): Record<string, unknown> {
   const bestEffort = config.writeConsistencyMode === "best_effort";
   return {
-    server_version: "0.3.1",
+    server_version: "0.3.2",
     registry_version: 1,
     contract_version: contracts.manifest.version,
     contract_verified_at: contracts.manifest.verifiedAt,
@@ -83,6 +87,21 @@ export function buildCapabilityReport(
           ...(bestEffort ? {} : { reasonCode: "strict_mode_default" }),
         };
       }
+      if (policy.tool === "yuque_preview_change_book_collaborator") {
+        return config.allowPermissionChanges === true
+          ? {
+              ...policy,
+              availability: "available",
+              required_write_mode: "none",
+              reasonCode: undefined,
+            }
+          : {
+              ...policy,
+              availability: "disabled",
+              required_write_mode: "none",
+              reasonCode: "permission_changes_disabled",
+            };
+      }
       return {
         ...policy,
         required_write_mode: "none",
@@ -98,11 +117,15 @@ function available(
   return { tool, availability: "available", hostTypes: [...hostTypes] };
 }
 
-function previewOnly(tool: string, reasonCode: string): CapabilityPolicy {
+function previewOnly(
+  tool: string,
+  reasonCode: string,
+  hostTypes: readonly CapabilityHostType[] = personalAndOrganization,
+): CapabilityPolicy {
   return {
     tool,
     availability: "preview_only",
-    hostTypes: [...personalAndOrganization],
+    hostTypes: [...hostTypes],
     reasonCode,
   };
 }

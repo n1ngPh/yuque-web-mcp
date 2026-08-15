@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: yuque-web-mcp:0.3.1
+    image: yuque-web-mcp:0.3.2
     restart: unless-stopped
     env_file:
       - /etc/yuque-web-mcp/service.env

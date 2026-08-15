@@ -56,7 +56,7 @@ export const MCP_INSTRUCTIONS = `语雀网页会话 MCP（安全自托管版）�
 个人/空间作用域规则：先调用 yuque_list_scopes 发现当前员工可用作用域。读取个人空间时给列表或索引工具显式传 scope_id=personal；读取公司空间时传 scope_id=organization 或返回的 organization:<id>。给定完整知识库或文档URL的工具会自动识别Host和作用域。不得调用或猜测网页全局“切换空间”接口，因为并发会话之间不能共享可变上下文。
 强制路径提示规则：用户询问任何文档或目录时，回答正文、摘要或目录内容之前，必须先输出“完整路径：<个人：姓名或空间：组织 / 知识库名 / 目录层级 / 文档名>”和对应URL。不得只报标题。若同名结果位于不同路径，必须列出每个候选的完整路径和URL并让用户确认，未确认前不得自行选择。
 删除边界规则：Doc、Sheet和个人知识库整对象删除工具存在，但默认关闭；只有部署者显式开启、目标命中精确知识库白名单且专用个人Host契约完成真实捕获、关闭浏览器重放和删除后对账时才生成Preview。Preview必须展示完整路径和不可恢复影响；Confirm除diff_digest及confirm_deletions=true外还必须原样提交完整路径confirmation_text。非空知识库还必须在Preview显式allow_nonempty=true。DELETE方法本身不等于资源删除，例如DELETE /lock仅释放临时协作锁。
-当前已真实验证并允许调用的能力：登录状态、绑定用户、个人/公司作用域发现、个人/公司知识库、目录、全局文档位置、Doc纯文本读取、企业/知识库全文搜索、Markdown转Lake、LakeSheet值/公式/已支持基础格式范围读取、多工作表与空工作簿读取，以及本地退出。个人空间的全局全文搜索尚未验证，必须提供个人 book_url 做知识库范围搜索。Sheet Preview中的公式缓存值由服务自行计算，当前只支持四则运算和SUM/AVERAGE/MIN/MAX/COUNT/COUNTA/IF/AND/OR/NOT/COUNTIF/SUMIF/COUNTIFS/SUMIFS/AVERAGEIF/AVERAGEIFS/COUNTBLANK/LARGE/SMALL/STDEVP/VARP/STDEVS/VARS/ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISEVEN/ISODD/ABS/ROUND/CEILING/FLOOR/SUMPRODUCT/CHOOSE/RANK/SIGN/PI/EXP/LN/LOG/LOG10/TRUNC/MROUND/QUOTIENT/SIN/COS/TAN/DEGREES/RADIANS/FACT/GCD/LCM/COMBIN/SUMSQ/CONCAT/CONCATENATE/LEFT/RIGHT/MID/LEN/LOWER/UPPER/TRIM/FIND/SEARCH/SUBSTITUTE/REPLACE/REPT/EXACT/ROUNDUP/ROUNDDOWN/INT/MOD/SQRT/POWER/PRODUCT/MEDIAN/VLOOKUP/HLOOKUP/MATCH/INDEX；其中STDEVP/VARP只接受至少1个数值的单一范围，STDEVS/VARS只接受至少2个数值的单一范围，非数值格忽略；VLOOKUP/HLOOKUP/MATCH只允许已验证的精确匹配模式，RANK只允许降序模式0，CEILING/FLOOR只允许非负值和正步长，SUMPRODUCT只允许两个等维纯数值范围，CHOOSE只允许标量候选，LOG和TRUNC只允许已验证的两参数形式，MROUND只允许非负数和正倍数，LN/LOG10拒绝非正数，QUOTIENT拒绝零除数，FACT与COMBIN只接受0至170的安全整数范围，GCD/LCM只接受非负安全整数且LCM拒绝超出安全整数的结果，SUMSQ只接受标量参数，FIND/SEARCH只允许带明确起始位置的三参数形式，SUBSTITUTE只允许三参数全量替换，SUBSTITUTE/REPLACE/REPT结果最多10,000字符，多条件函数要求范围维度一致且拒绝通配符。调用方提交的formula.value会被忽略，普通单元格变化会重算同表既有公式并进入Diff，未知函数和循环引用会拒绝。固定包不支持MAXIFS/MINIFS，NOW/TODAY/RAND等易变函数也保持关闭，不能猜测开放。个人测试表已验证column/stackColumn/bar/stackBar/line/smoothLine/pie/ring八类图表的类型字段写入、回读与完整恢复；其中column还验证了6套主题、6套布局以及边框、隐藏/空数据展示、网格线、Y轴格式化及前后缀、标题/轴标题、图例、数据标签、X轴标签与旋转、Y轴上下限等21个显示配置路径。个人Host现在允许通过yuque_preview_update_sheet生成严格白名单图表Diff：create_column_chart仅限无其他内容或vessel的单工作表A1:B3六个简单单元格结构，set_chart_type支持八类已验证类型，update_column_chart_display仅限column及已验证字段，delete_chart仅限完成网页捕获、关闭浏览器重放和精确恢复的同形态单柱状图；删除Preview必须展示图表类型、来源范围和工作表并要求confirm_deletions=true。所有图表Preview只本地编解码且可取消，不发送远程写请求。原始vessels/chartConfigs永不接受或输出，图表Confirm仍关闭。Lake转Markdown、通用Doc创建/更新和所有Sheet远程写入尚未完成完整契约验证，会安全失败；禁止猜测接口或绕过门禁。
+当前已真实验证并允许调用的能力：登录状态、绑定用户、个人/公司作用域发现、个人/公司自有知识库、个人受邀知识库及reader/editor角色、私有个人知识库协作者列表与权限变更、目录、全局文档位置、Doc纯文本读取、企业/知识库全文搜索、Markdown转Lake、LakeSheet值/公式/已支持基础格式范围读取、多工作表与空工作簿读取，以及本地退出。共享知识库完整路径使用“共享：<所有者> / <知识库> / ...”；邀请创建后接收方仍需在语雀确认加入。权限变更默认关闭，只有ALLOW_PERMISSION_CHANGES=true、best_effort和精确知识库白名单同时满足时才能Confirm。个人空间的全局全文搜索尚未验证，必须提供个人 book_url 做知识库范围搜索。Sheet Preview中的公式缓存值由服务自行计算，当前只支持四则运算和SUM/AVERAGE/MIN/MAX/COUNT/COUNTA/IF/AND/OR/NOT/COUNTIF/SUMIF/COUNTIFS/SUMIFS/AVERAGEIF/AVERAGEIFS/COUNTBLANK/LARGE/SMALL/STDEVP/VARP/STDEVS/VARS/ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISEVEN/ISODD/ABS/ROUND/CEILING/FLOOR/SUMPRODUCT/CHOOSE/RANK/SIGN/PI/EXP/LN/LOG/LOG10/TRUNC/MROUND/QUOTIENT/SIN/COS/TAN/DEGREES/RADIANS/FACT/GCD/LCM/COMBIN/SUMSQ/CONCAT/CONCATENATE/LEFT/RIGHT/MID/LEN/LOWER/UPPER/TRIM/FIND/SEARCH/SUBSTITUTE/REPLACE/REPT/EXACT/ROUNDUP/ROUNDDOWN/INT/MOD/SQRT/POWER/PRODUCT/MEDIAN/VLOOKUP/HLOOKUP/MATCH/INDEX；其中STDEVP/VARP只接受至少1个数值的单一范围，STDEVS/VARS只接受至少2个数值的单一范围，非数值格忽略；VLOOKUP/HLOOKUP/MATCH只允许已验证的精确匹配模式，RANK只允许降序模式0，CEILING/FLOOR只允许非负值和正步长，SUMPRODUCT只允许两个等维纯数值范围，CHOOSE只允许标量候选，LOG和TRUNC只允许已验证的两参数形式，MROUND只允许非负数和正倍数，LN/LOG10拒绝非正数，QUOTIENT拒绝零除数，FACT与COMBIN只接受0至170的安全整数范围，GCD/LCM只接受非负安全整数且LCM拒绝超出安全整数的结果，SUMSQ只接受标量参数，FIND/SEARCH只允许带明确起始位置的三参数形式，SUBSTITUTE只允许三参数全量替换，SUBSTITUTE/REPLACE/REPT结果最多10,000字符，多条件函数要求范围维度一致且拒绝通配符。调用方提交的formula.value会被忽略，普通单元格变化会重算同表既有公式并进入Diff，未知函数和循环引用会拒绝。固定包不支持MAXIFS/MINIFS，NOW/TODAY/RAND等易变函数也保持关闭，不能猜测开放。个人测试表已验证column/stackColumn/bar/stackBar/line/smoothLine/pie/ring八类图表的类型字段写入、回读与完整恢复；其中column还验证了6套主题、6套布局以及边框、隐藏/空数据展示、网格线、Y轴格式化及前后缀、标题/轴标题、图例、数据标签、X轴标签与旋转、Y轴上下限等21个显示配置路径。个人Host现在允许通过yuque_preview_update_sheet生成严格白名单图表Diff：create_column_chart仅限无其他内容或vessel的单工作表A1:B3六个简单单元格结构，set_chart_type支持八类已验证类型，update_column_chart_display仅限column及已验证字段，delete_chart仅限完成网页捕获、关闭浏览器重放和精确恢复的同形态单柱状图；删除Preview必须展示图表类型、来源范围和工作表并要求confirm_deletions=true。所有图表Preview只本地编解码且可取消，不发送远程写请求。原始vessels/chartConfigs永不接受或输出，图表Confirm仍关闭。Lake转Markdown、通用Doc创建/更新和所有Sheet远程写入尚未完成完整契约验证，会安全失败；禁止猜测接口或绕过门禁。
 推荐读取流程：先调用 yuque_auth_status；未登录时依次调用 yuque_login_begin 和 yuque_login_status。然后调用 yuque_list_scopes 并选择显式 scope_id。查找文档优先调用 yuque_list_all_docs，使用 query 按标题、知识库、完整目录路径或 URL 过滤，并用 offset/limit 分页；只在明确需要单个知识库目录时调用 yuque_get_toc 或 yuque_list_docs。定位目标后，把返回的完整 url 作为 doc_url 调用 yuque_get_doc。
 yuque_list_all_docs 只返回位置索引，不返回正文；不要试图一次读取所有文档正文。其索引缓存五分钟，只有必须获取最新目录时才设置 force_refresh=true。yuque_get_doc 返回 plain_text 正文以及 version、updated_at、fingerprint 等元数据。
 “全部文档”仅指当前员工语雀权限范围内的可见文档，服务不会也不能绕过语雀权限。当前实例只绑定一名员工；多名员工必须使用不同实例、Bearer Token、语雀登录态和数据卷，不得共享。
@@ -193,7 +193,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_list_book_collaborators",
     description:
-      "列出私有个人知识库中经验证的reader/editor协作者。接口未完成真实捕获和无浏览器重放时安全失败，不猜测手机号、邮箱或权限字段。",
+      "列出私有个人知识库中经真实捕获和关闭浏览器重放验证的reader/editor协作者；返回当前角色和邀请状态，不猜测手机号、邮箱或权限字段。",
     inputSchema: {
       type: "object",
       properties: { book_url: stringProperty("Personal knowledge-base URL.") },
@@ -562,7 +562,7 @@ export function createMcpServer(
   deps: McpDependencies,
 ): Server {
   const server = new Server(
-    { name: "yuque-web-mcp", version: "0.3.1" },
+    { name: "yuque-web-mcp", version: "0.3.2" },
     { capabilities: { tools: {} }, instructions: MCP_INSTRUCTIONS },
   );
 
@@ -953,7 +953,12 @@ async function callTool(
         description: optionalString(args, "description"),
       });
     case "yuque_preview_change_book_collaborator":
-      return v03CapabilityBlocked("change_book_collaborator");
+      return deps.changes.previewChangeBookCollaborator(employeeId, {
+        bookUrl: requireString(args, "book_url"),
+        action: requireCollaboratorAction(args),
+        collaboratorLogin: requireString(args, "collaborator_login"),
+        role: optionalCollaboratorRole(args),
+      });
     case "yuque_preview_delete_doc":
       if (!deps.changes.objectDeletionEnabled())
         throw new Error("Object deletion is disabled by configuration");
@@ -1050,6 +1055,27 @@ function requireUpdateMode(
     );
   }
   return value as "append" | "replace_section" | "delete_section" | "rename";
+}
+
+function requireCollaboratorAction(
+  args: Record<string, unknown>,
+): "invite" | "change_role" | "remove" {
+  const value = requireString(args, "action");
+  if (!["invite", "change_role", "remove"].includes(value)) {
+    throw new Error("action must be invite, change_role or remove");
+  }
+  return value as "invite" | "change_role" | "remove";
+}
+
+function optionalCollaboratorRole(
+  args: Record<string, unknown>,
+): "reader" | "editor" | undefined {
+  const value = optionalString(args, "role");
+  if (value === undefined) return undefined;
+  if (value !== "reader" && value !== "editor") {
+    throw new Error("role must be reader or editor");
+  }
+  return value;
 }
 
 function changeTokenSchema(): JsonSchema {

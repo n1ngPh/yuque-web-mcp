@@ -1,7 +1,20 @@
 {
-  "version": "2026-08-16-personal-book-update-45",
+  "version": "2026-08-16-personal-collaboration-46",
   "verifiedAt": "2026-08-16T00:00:00.000Z",
-  "sourceBundles": [],
+  "sourceBundles": [
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/common.d114c29e.js",
+      "sha256": "a571bbb294c6f89b2828d0c55ad6751d1bd7f27e76efdeee8eae22e0c9521fc4"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/c__BookManage.46bb8014.async.js",
+      "sha256": "6d7b75a4a0a17f4a9d8afc56efdd192c909c37dca1531f35bea6faf0bb2bdc4a"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/p__bookJoin__routers__App.b3d0fd53.async.js",
+      "sha256": "b0afde0fb150f3783372dcf3cbf4297b5e9d3776bc04d8d709b9bb2b5b062624"
+    }
+  ],
   "endpoints": [
     {
       "capability": "get_user",
@@ -38,6 +51,26 @@
       "requiredResponsePaths": ["data"]
     },
     {
+      "capability": "list_collaborate_books",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/mine/collaborate_books",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "list_current_collaborations",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/mine/collaborations",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
       "capability": "list_book_collaborators",
       "verified": true,
       "observedHostTypes": ["personal"],
@@ -46,6 +79,103 @@
       "path": "/api/collaborations",
       "idempotent": true,
       "requiredResponsePaths": ["data", "meta.permission", "meta.total"]
+    },
+    {
+      "capability": "search_users",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/users/complete",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"]
+    },
+    {
+      "capability": "create_book_collaborator",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "POST",
+      "path": "/api/collaborations",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "deletionEffect": "none",
+      "targetResourceType": "Collaboration",
+      "requiredResponsePaths": ["data"],
+      "verifiedScenarios": [
+        {
+          "id": "private_personal_book_invite_reader",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 4,
+          "retryAttempts": 0,
+          "browserStarts": 2,
+          "deleteRequests": 0,
+          "constraints": [
+            "exact-login user completion followed by one reader invitation",
+            "browser-closed replay and owner list read-back",
+            "recipient must explicitly join before shared access appears"
+          ]
+        }
+      ]
+    },
+    {
+      "capability": "update_book_collaborator",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "PUT",
+      "path": "/api/collaborations/{collaborationId}",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "deletionEffect": "none",
+      "targetResourceType": "Collaboration",
+      "requiredResponsePaths": ["data"],
+      "verifiedScenarios": [
+        {
+          "id": "private_personal_book_reader_editor_role_cycle",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 4,
+          "retryAttempts": 0,
+          "browserStarts": 2,
+          "deleteRequests": 0,
+          "constraints": [
+            "reader=0 and editor=1 captured from UI",
+            "browser-closed promote and demote with list read-back",
+            "reader self-escalation returned concealed 404 without invalidating login"
+          ]
+        }
+      ]
+    },
+    {
+      "capability": "delete_book_collaborator",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "DELETE",
+      "path": "/api/collaborations/{collaborationId}",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "deletionEffect": "permission",
+      "targetResourceType": "Collaboration",
+      "requiredResponsePaths": ["data"],
+      "verifiedScenarios": [
+        {
+          "id": "private_personal_book_collaborator_remove",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 5,
+          "retryAttempts": 0,
+          "browserStarts": 3,
+          "deleteRequests": 5,
+          "constraints": [
+            "Yuque UI removes immediately without native confirmation",
+            "MCP adds Preview and one-time Confirm before DELETE",
+            "owner list, recipient shared list and direct 404 read-back verified"
+          ]
+        }
+      ]
     },
     {
       "capability": "create_book",

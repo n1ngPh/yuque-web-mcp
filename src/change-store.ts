@@ -186,6 +186,72 @@ export class ChangeStore {
     );
   }
 
+  async previewChangeBookCollaborator(
+    ownerId: string,
+    input: {
+      bookUrl: string;
+      action: "invite" | "change_role" | "remove";
+      collaboratorLogin: string;
+      role?: "reader" | "editor";
+    },
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    if (this.config.allowPermissionChanges !== true) {
+      throw new Error(
+        "Permission changes are disabled by configuration; set ALLOW_PERMISSION_CHANGES=true only for an exact write allowlist",
+      );
+    }
+    const prepared = await this.client.prepareBookCollaboratorChange(
+      ownerId,
+      input,
+    );
+    const before = prepared.current
+      ? `collaborator: ${prepared.current.login}\nrole: ${prepared.current.role}`
+      : "(no collaborator)";
+    const after =
+      prepared.action === "remove"
+        ? "(collaborator removed)"
+        : `collaborator: ${prepared.collaboratorLogin}\nrole: ${prepared.role}`;
+    const diff = createTwoFilesPatch(
+      `${prepared.displayPath} / collaborators`,
+      `${prepared.displayPath} / collaborators`,
+      before,
+      after,
+      "baseline",
+      "proposed",
+    );
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "change_book_collaborator",
+        targetUrl: prepared.book.url,
+        displayPath: prepared.displayPath,
+        bookId: prepared.book.id,
+        ownerLogin: prepared.book.ownerLogin,
+        collaboratorId: prepared.current?.collaborationId,
+        collaboratorLogin: prepared.collaboratorLogin,
+        collaboratorRole: prepared.role,
+        collaboratorAction: prepared.action,
+        baseFingerprint: prepared.baselineFingerprint,
+        resourceType: "KnowledgeBase",
+      },
+      diff,
+      [
+        "Permission changes have no atomic CAS; strict mode remains Preview-only and best_effort requires an exact knowledge-base allowlist.",
+        prepared.action === "invite"
+          ? "The recipient must explicitly join the invitation before shared access appears."
+          : prepared.action === "remove"
+            ? `Confirm removes ${prepared.collaboratorLogin} with current role ${prepared.current?.role}; the knowledge-base content is not deleted.`
+            : `Confirm changes ${prepared.collaboratorLogin} from ${prepared.current?.role} to ${prepared.role}.`,
+      ],
+      {
+        added_lines: prepared.action === "remove" ? 0 : 2,
+        removed_lines: prepared.current ? 2 : 0,
+        has_deletions: false,
+      },
+    );
+  }
+
   async previewCreate(
     ownerId: string,
     input: {
@@ -575,6 +641,12 @@ export class ChangeStore {
         "Remote Confirm is blocked by strict write consistency mode; create a new Preview after the deployment owner explicitly enables best_effort for an exact knowledge-base allowlist",
       );
     }
+    if (
+      payload.kind === "change_book_collaborator" &&
+      this.config.allowPermissionChanges !== true
+    ) {
+      throw new Error("Permission changes were disabled after Preview");
+    }
     if (payload.kind === "update_sheet_chart") {
       throw new Error(
         "Chart Confirm is disabled; cancel this local Preview. No remote write was attempted.",
@@ -709,6 +781,40 @@ export class ChangeStore {
         state: "succeeded",
         result: { ...updated },
       };
+    }
+    if (payload.kind === "change_book_collaborator") {
+      if (
+        !payload.targetUrl ||
+        !payload.collaboratorLogin ||
+        !payload.collaboratorAction ||
+        !payload.baseFingerprint
+      ) {
+        throw new Error("Stored collaborator change is incomplete");
+      }
+      const prepared = await this.client.prepareBookCollaboratorChange(
+        ownerId,
+        {
+          bookUrl: payload.targetUrl,
+          action: payload.collaboratorAction,
+          collaboratorLogin: payload.collaboratorLogin,
+          ...(payload.collaboratorRole
+            ? { role: payload.collaboratorRole }
+            : {}),
+        },
+      );
+      if (prepared.baselineFingerprint !== payload.baseFingerprint) {
+        throw new ConflictError(
+          "Knowledge-base collaborators changed after Preview; no write was attempted",
+        );
+      }
+      const changed = await this.client.changeBookCollaborator(ownerId, {
+        bookUrl: payload.targetUrl,
+        action: payload.collaboratorAction,
+        collaboratorLogin: payload.collaboratorLogin,
+        ...(payload.collaboratorRole ? { role: payload.collaboratorRole } : {}),
+        baselineFingerprint: payload.baseFingerprint,
+      });
+      return { state: "succeeded", result: changed };
     }
     if (payload.kind === "create_doc") {
       if (

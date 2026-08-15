@@ -128,7 +128,25 @@ export interface BookCollaborator {
   name?: string;
   role: "owner" | "reader" | "editor" | "unknown";
   roleCode: number;
+  status: number;
   isCurrentUser: boolean;
+}
+
+export interface PreparedBookCollaboratorChange {
+  book: NormalizedBook;
+  action: "invite" | "change_role" | "remove";
+  collaboratorLogin: string;
+  role?: "reader" | "editor";
+  current?: BookCollaborator;
+  baselineFingerprint: string;
+  displayPath: string;
+  candidate?: {
+    id: number;
+    userId: number;
+    login: string;
+    name: string;
+    workId: string;
+  };
 }
 
 export interface CatalogNode {
@@ -373,6 +391,239 @@ export class YuqueWebClient {
     return { book, collaborators };
   }
 
+  async prepareBookCollaboratorChange(
+    employeeId: string,
+    input: {
+      bookUrl: string;
+      action: "invite" | "change_role" | "remove";
+      collaboratorLogin: string;
+      role?: "reader" | "editor";
+    },
+  ): Promise<PreparedBookCollaboratorChange> {
+    this.assertWriteTargetAllowed(input.bookUrl);
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+    const { book, collaborators } = await this.listBookCollaborators(
+      employeeId,
+      input.bookUrl,
+    );
+    if (
+      book.scopeType !== "personal" ||
+      book.ownerLogin !== session.account.login ||
+      book.accessType !== "owner" ||
+      !book.private
+    ) {
+      throw new ContractError(
+        "Collaborator changes are verified only for a private personal knowledge base owned by the current account",
+      );
+    }
+    const collaboratorLogin = input.collaboratorLogin.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(collaboratorLogin)) {
+      throw new Error("collaborator_login is not a valid Yuque login");
+    }
+    if (collaboratorLogin === session.account.login) {
+      throw new Error(
+        "The knowledge-base owner cannot be changed as a collaborator",
+      );
+    }
+    if (
+      (input.action === "invite" || input.action === "change_role") &&
+      !input.role
+    ) {
+      throw new Error("role is required for invite and change_role");
+    }
+    if (input.action === "remove" && input.role) {
+      throw new Error("role must be omitted for remove");
+    }
+    const matches = collaborators.filter(
+      (entry) => entry.login === collaboratorLogin,
+    );
+    if (matches.length > 1) {
+      throw new ContractError("Collaborator list contains a duplicate login");
+    }
+    const current = matches[0];
+    let candidate: PreparedBookCollaboratorChange["candidate"];
+    if (input.action === "invite") {
+      if (current) throw new Error("The Yuque login is already a collaborator");
+      candidate = await this.findExactUser(employeeId, collaboratorLogin, book);
+    } else {
+      if (!current) throw new Error("The Yuque login is not a collaborator");
+      if (current.role !== "reader" && current.role !== "editor") {
+        throw new ContractError(
+          "Only verified reader/editor collaborators can be changed",
+        );
+      }
+      if (input.action === "change_role" && current.role === input.role) {
+        throw new Error("Collaborator already has the requested role");
+      }
+    }
+    return {
+      book,
+      action: input.action,
+      collaboratorLogin,
+      ...(input.role ? { role: input.role } : {}),
+      ...(current ? { current } : {}),
+      ...(candidate ? { candidate } : {}),
+      baselineFingerprint: collaboratorFingerprint(collaborators),
+      displayPath: `${book.scopeLabel} / ${book.name}`,
+    };
+  }
+
+  async changeBookCollaborator(
+    employeeId: string,
+    input: {
+      bookUrl: string;
+      action: "invite" | "change_role" | "remove";
+      collaboratorLogin: string;
+      role?: "reader" | "editor";
+      baselineFingerprint: string;
+    },
+  ): Promise<Record<string, unknown>> {
+    const prepared = await this.prepareBookCollaboratorChange(
+      employeeId,
+      input,
+    );
+    if (prepared.baselineFingerprint !== input.baselineFingerprint) {
+      throw new ContractError(
+        "Knowledge-base collaborators changed after Preview; no write was attempted",
+      );
+    }
+    const capability: CapabilityName =
+      prepared.action === "invite"
+        ? "create_book_collaborator"
+        : prepared.action === "change_role"
+          ? "update_book_collaborator"
+          : "delete_book_collaborator";
+    this.contracts.getWritable(capability, "personal");
+    const referer = `${prepared.book.host}/r/${encodeURIComponent(prepared.book.groupLogin)}/${encodeURIComponent(prepared.book.slug)}/collaborators`;
+    const roleCode = prepared.role === "editor" ? 1 : 0;
+    let collaborationId = prepared.current?.collaborationId;
+    let reconciledAfterUnknownResponse = false;
+    try {
+      if (prepared.action === "invite") {
+        if (!prepared.candidate) {
+          throw new Error("Stored collaborator candidate is missing");
+        }
+        const raw = await this.request(employeeId, capability, {
+          body: {
+            onlyStaff: true,
+            role: roleCode,
+            status: 1,
+            target_id: prepared.book.id,
+            target_type: "Book",
+            users: [
+              {
+                id: prepared.candidate.id,
+                login: prepared.candidate.login,
+                name: prepared.candidate.name,
+                user_id: prepared.candidate.userId,
+                work_id: prepared.candidate.workId,
+                workid: prepared.candidate.workId,
+              },
+            ],
+          },
+          baseHost: prepared.book.host,
+          referer,
+        });
+        if (!Array.isArray(raw) || raw.length !== 1) {
+          throw new ContractError(
+            "Collaborator invitation response is not a single-item array",
+          );
+        }
+        collaborationId = String(
+          requireNumber(asRecord(raw[0], "Invited collaborator"), "id"),
+        );
+      } else if (prepared.action === "change_role") {
+        await this.request(employeeId, capability, {
+          pathParams: { collaborationId: prepared.current!.collaborationId },
+          body: { role: roleCode },
+          baseHost: prepared.book.host,
+          referer,
+        });
+      } else {
+        await this.request(employeeId, capability, {
+          pathParams: { collaborationId: prepared.current!.collaborationId },
+          body: {},
+          baseHost: prepared.book.host,
+          referer,
+        });
+      }
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      reconciledAfterUnknownResponse = true;
+    }
+    const verified = await this.listBookCollaborators(
+      employeeId,
+      prepared.book.url,
+    );
+    const matches = verified.collaborators.filter(
+      (entry) => entry.login === prepared.collaboratorLogin,
+    );
+    const success =
+      prepared.action === "remove"
+        ? matches.length === 0
+        : matches.length === 1 && matches[0]?.role === prepared.role;
+    if (!success) {
+      if (reconciledAfterUnknownResponse) {
+        throw new Error(
+          "Collaborator write result is unknown after a network failure; do not retry",
+        );
+      }
+      throw new ContractError(
+        "Collaborator write read-back does not match the Preview",
+      );
+    }
+    if (matches[0]) collaborationId = matches[0].collaborationId;
+    return {
+      status:
+        prepared.action === "invite"
+          ? "invited"
+          : prepared.action === "change_role"
+            ? "role_changed"
+            : "removed",
+      book_url: prepared.book.url,
+      display_path: prepared.displayPath,
+      collaborator_login: prepared.collaboratorLogin,
+      ...(prepared.role ? { role: prepared.role } : {}),
+      ...(collaborationId ? { collaboration_id: collaborationId } : {}),
+      reconciled_after_unknown_response: reconciledAfterUnknownResponse,
+    };
+  }
+
+  private async findExactUser(
+    employeeId: string,
+    login: string,
+    book: NormalizedBook,
+  ): Promise<NonNullable<PreparedBookCollaboratorChange["candidate"]>> {
+    const raw = await this.request(employeeId, "search_users", {
+      query: { q: login, include_unconfirmed_corp_account: true },
+      baseHost: book.host,
+      referer: `${book.host}/r/${encodeURIComponent(book.groupLogin)}/${encodeURIComponent(book.slug)}/collaborators`,
+    });
+    if (!Array.isArray(raw)) {
+      throw new ContractError("Yuque user search is not an array");
+    }
+    const matches = raw
+      .map((value) => asRecord(value, "Yuque user candidate"))
+      .filter((value) => value.login === login);
+    if (matches.length !== 1) {
+      throw new ContractError(
+        "Exact collaborator login did not resolve to one Yuque account",
+      );
+    }
+    const candidate = matches[0];
+    if (!candidate) {
+      throw new ContractError("Exact collaborator candidate disappeared");
+    }
+    return {
+      id: requireNumber(candidate, "id"),
+      userId: requireNumber(candidate, "user_id"),
+      login: requireStringValue(candidate, "login"),
+      name: requireStringValue(candidate, "name"),
+      workId: optionalStringValue(candidate.work_id) ?? "",
+    };
+  }
+
   async listAllBooks(
     employeeId: string,
     scopeId = "organization",
@@ -411,6 +662,71 @@ export class YuqueWebClient {
       if (raw.length < pageSize) break;
       if (offset + pageSize >= 10_000)
         throw new ContractError("Yuque book pagination exceeded safety limit");
+    }
+    if (personal && this.contracts.has("list_collaborate_books", "personal")) {
+      if (!this.contracts.has("list_current_collaborations", "personal")) {
+        throw new ContractError(
+          "Shared knowledge-base role contract is unavailable",
+        );
+      }
+      const currentRaw = await this.request(
+        employeeId,
+        "list_current_collaborations",
+        {
+          baseHost,
+          referer: `${this.config.personalYuqueHost}/dashboard`,
+        },
+      );
+      if (!Array.isArray(currentRaw)) {
+        throw new ContractError("Current collaboration list is not an array");
+      }
+      const roleByBookId = new Map<number, "reader" | "editor">();
+      for (const value of currentRaw) {
+        const entry = asRecord(value, "Current collaboration");
+        if (entry.target_type !== "Book") continue;
+        const targetId = requireNumber(entry, "target_id");
+        const role = roleFromCode(requireNumber(entry, "role"));
+        if (role === "reader" || role === "editor") {
+          roleByBookId.set(targetId, role);
+        }
+      }
+      for (let offset = 0; offset < 10_000; offset += pageSize) {
+        const raw = await this.request(employeeId, "list_collaborate_books", {
+          query: { limit: pageSize, offset },
+          baseHost,
+          referer: `${this.config.personalYuqueHost}/dashboard`,
+        });
+        if (!Array.isArray(raw)) {
+          throw new ContractError(
+            "Yuque collaborated-book list is not an array",
+          );
+        }
+        books.push(
+          ...raw.map((value) => {
+            const record = asRecord(value, "Collaborated knowledge base");
+            const role = roleByBookId.get(requireNumber(record, "id"));
+            if (!role) {
+              throw new ContractError(
+                "Collaborated knowledge base has no verified current role",
+              );
+            }
+            return normalizeBook(record, baseHost, {
+              type: "personal",
+              personalName:
+                session.account.name?.trim() || session.account.login,
+              organizationFallback: this.config.organization,
+              accessType: "collaborator",
+              collaboratorRole: role,
+            });
+          }),
+        );
+        if (raw.length < pageSize) break;
+        if (offset + pageSize >= 10_000) {
+          throw new ContractError(
+            "Yuque collaborated-book pagination exceeded safety limit",
+          );
+        }
+      }
     }
     const filtered = scopeId.startsWith("organization:")
       ? books.filter((book) => book.scopeId === scopeId)
@@ -2026,6 +2342,8 @@ function normalizeBook(
     type: YuqueScopeType;
     personalName: string;
     organizationFallback: string;
+    accessType?: "owner" | "collaborator";
+    collaboratorRole?: "reader" | "editor";
   },
 ): NormalizedBook {
   const record = asRecord(value, "Knowledge base");
@@ -2046,7 +2364,7 @@ function normalizeBook(
     optionalStringValue(organization?.name) ?? context.organizationFallback;
   const scopeName =
     context.type === "personal" ? context.personalName : organizationName;
-  const accessType = "owner" as const;
+  const accessType = context.accessType ?? "owner";
   const scopeId =
     context.type === "personal"
       ? "personal"
@@ -2054,7 +2372,11 @@ function normalizeBook(
         ? "organization"
         : `organization:${String(organizationId)}`;
   const scopeLabel =
-    context.type === "personal" ? `个人：${scopeName}` : `空间：${scopeName}`;
+    accessType === "collaborator"
+      ? `共享：${groupLogin}`
+      : context.type === "personal"
+        ? `个人：${scopeName}`
+        : `空间：${scopeName}`;
   const updatedAt = optionalStringValue(record.updated_at);
   const visibility = optionalNumber(record.public);
   return {
@@ -2077,7 +2399,9 @@ function normalizeBook(
     ownerLogin: groupLogin,
     accessType,
     private: visibility === 0,
-    ...(accessType === "owner" ? { role: "owner" as const } : {}),
+    ...(accessType === "owner"
+      ? { role: "owner" as const }
+      : { role: requiredCollaboratorRole(context.collaboratorRole) }),
     ...(updatedAt ? { updatedAt } : {}),
   };
 }
@@ -2109,10 +2433,42 @@ function normalizeBookCollaborator(
     collaborationId: String(requireNumber(record, "id")),
     login,
     ...(name ? { name } : {}),
-    role: isOwner ? "owner" : "unknown",
+    role: isOwner ? "owner" : roleFromCode(roleCode),
     roleCode,
+    status: requireNumber(record, "status"),
     isCurrentUser: login === currentLogin,
   };
+}
+
+function requiredCollaboratorRole(
+  role: "reader" | "editor" | undefined,
+): "reader" | "editor" {
+  if (!role) {
+    throw new ContractError("Collaborated knowledge base has an unknown role");
+  }
+  return role;
+}
+
+function roleFromCode(
+  roleCode: number,
+): "owner" | "reader" | "editor" | "unknown" {
+  if (roleCode === 0) return "reader";
+  if (roleCode === 1) return "editor";
+  if (roleCode === 2) return "owner";
+  return "unknown";
+}
+
+function collaboratorFingerprint(collaborators: BookCollaborator[]): string {
+  return fingerprint(
+    collaborators
+      .map((entry) => ({
+        id: entry.collaborationId,
+        login: entry.login,
+        role: entry.roleCode,
+        status: entry.status,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  );
 }
 
 function normalizeOrganizationScope(

@@ -8,7 +8,7 @@ import {
 } from "../src/mcp.js";
 
 describe("MCP public surface", () => {
-  it("exposes exactly the 30 v0.3.1 tools with capability discovery", async () => {
+  it("exposes exactly the 30 v0.3.2 tools with capability discovery", async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const server = createMcpServer("employee.a", {} as never);

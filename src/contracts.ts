@@ -66,6 +66,19 @@ export class ContractRegistry {
     }
     return contract;
   }
+
+  has(
+    capability: CapabilityName,
+    hostType: "organization" | "personal" = "organization",
+  ): boolean {
+    try {
+      this.get(capability, hostType);
+      return true;
+    } catch (error) {
+      if (error instanceof ContractError) return false;
+      throw error;
+    }
+  }
 }
 
 export function interpolatePath(

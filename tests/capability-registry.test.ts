@@ -21,7 +21,7 @@ describe("Capability Registry", () => {
       report.capabilities as Array<Record<string, unknown>>
     ).find((entry) => entry.tool === "yuque_confirm_change");
     expect(report).toMatchObject({
-      server_version: "0.3.1",
+      server_version: "0.3.2",
       contract_version: "fixture-contract",
       write_consistency_mode: "strict",
       safeguards: {

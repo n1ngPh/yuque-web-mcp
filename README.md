@@ -10,7 +10,7 @@
 | --------------------------------------------------------------- | ------------------------------------------------------------ |
 | 微信、钉钉、支付宝扫码登录，登录状态检查和本地退出              | 可用                                                         |
 | 个人空间与组织空间发现                                          | 可用                                                         |
-| 自有/受邀知识库、目录和文档位置索引                             | 可用；共享知识库支持仍在完善                                 |
+| 自有/受邀知识库、角色、目录和文档位置索引                     | 已验证；共享路径使用`共享：<所有者>`消歧                     |
 | 文档搜索、完整路径与 URL 消歧                                   | 可用                                                         |
 | 普通文档正文、版本、指纹和富内容类型读取                        | 可用                                                         |
 | LakeSheet 工作表、A1 范围、值、公式、基础格式和部分图表信息读取 | 可用                                                         |
@@ -18,7 +18,8 @@
 | 私有个人知识库创建                                              | 已验证；默认`strict`只预览，`best_effort`可确认并回读最终URL |
 | 私有个人知识库名称与描述修改                                    | 已验证；只发送变更字段，默认`strict`只预览                   |
 | 文档/表格远程写入                                               | 默认`strict`只预览；部署者可显式启用受门禁的`best_effort`    |
-| 知识库、协作者和整对象删除                                      | 工具框架已提供，默认关闭且未验证能力不会执行                 |
+| 私有知识库 reader/editor 协作者管理                              | 已验证；默认关闭，需精确白名单及`best_effort`确认            |
+| Doc、Sheet 和知识库整对象删除                                    | 工具框架已提供；默认关闭，未验证契约不会执行                 |
 
 服务目前注册30个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
 
@@ -92,6 +93,7 @@ npm run local:start
 - 认证：`yuque_auth_status`、`yuque_login_begin`、`yuque_login_status`、`yuque_logout`
 - 能力：`yuque_get_capabilities`
 - 空间与知识库：`yuque_list_scopes`、`yuque_list_books`、`yuque_get_book`、`yuque_preview_create_book`、`yuque_preview_update_book`
+- 协作者：`yuque_list_book_collaborators`、`yuque_preview_change_book_collaborator`；邀请后接收方仍需在语雀确认加入
 - 定位与搜索：`yuque_search`、`yuque_get_toc`、`yuque_list_docs`、`yuque_list_all_docs`
 - 文档与表格：`yuque_get_doc`、`yuque_get_sheet`
 - 变更流程：各类 `yuque_preview_*`、`yuque_confirm_change`、`yuque_cancel_change`

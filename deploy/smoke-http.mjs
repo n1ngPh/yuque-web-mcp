@@ -84,7 +84,7 @@ const capabilityPayload = await mcpPayload(capabilityResponse);
 const capabilityText = capabilityPayload.result?.content?.[0]?.text;
 const capabilityReport = JSON.parse(capabilityText || "null");
 if (
-  capabilityReport?.server_version !== "0.3.1" ||
+  capabilityReport?.server_version !== "0.3.2" ||
   !["strict", "best_effort"].includes(capabilityReport?.write_consistency_mode)
 ) {
   throw new Error("Capability Registry response is missing or incompatible");
