@@ -35,6 +35,14 @@ describe("Capability Registry", () => {
       required_write_mode: "strict",
       reasonCode: "strict_mode_default",
     });
+    const createBook = (
+      report.capabilities as Array<Record<string, unknown>>
+    ).find((entry) => entry.tool === "yuque_preview_create_book");
+    expect(createBook).toMatchObject({
+      availability: "available",
+      hostTypes: ["personal"],
+      required_write_mode: "none",
+    });
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain("secret-token");
     expect(serialized).not.toContain("company.invalid");

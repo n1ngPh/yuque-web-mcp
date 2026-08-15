@@ -24,6 +24,70 @@ afterEach(async () => {
 });
 
 describe("single-owner safe change store", () => {
+  it("previews and confirms a verified private personal knowledge base once", async () => {
+    const fixture = await createFixture();
+    let writes = 0;
+    const client = {
+      preparePersonalBookCreate: async (_owner: string, name: string) => ({
+        name,
+        ownerLogin: "alice",
+        displayPath: `个人：Alice / ${name}`,
+        dashboardUrl: "https://www.yuque.com/dashboard",
+      }),
+      createPersonalBook: async (
+        _owner: string,
+        input: { name: string; description?: string },
+      ) => {
+        writes += 1;
+        return {
+          status: "created" as const,
+          id: "44",
+          slug: "abc123",
+          name: input.name,
+          bookUrl: "https://www.yuque.com/alice/abc123",
+          displayPath: `个人：Alice / ${input.name}`,
+          private: true as const,
+          reconciledAfterUnknownResponse: false,
+        };
+      },
+    } as unknown as YuqueWebClient;
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+
+    const preview = await changes.previewCreateBook("employee.a", {
+      name: "yuque-web-mcp-e2e",
+      description: "sandbox",
+    });
+    expect(preview.display_path).toBe("个人：Alice / yuque-web-mcp-e2e");
+    expect(preview.target_url).toBe("https://www.yuque.com/dashboard");
+    expect(preview.diff).toContain("visibility: private");
+    expect(preview.requires_deletion_confirmation).toBe(false);
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+      ),
+    ).resolves.toMatchObject({
+      status: "created",
+      bookUrl: "https://www.yuque.com/alice/abc123",
+      private: true,
+    });
+    expect(writes).toBe(1);
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+      ),
+    ).rejects.toThrow("succeeded");
+    fixture.db.close();
+  });
+
   it("keeps every remote Confirm previewed in strict mode", async () => {
     const fixture = await createFixture();
     fixture.config.writeConsistencyMode = "strict";

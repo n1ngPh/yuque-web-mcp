@@ -211,6 +211,24 @@ export interface CreatedSheetResult {
   reconciledAfterUnknownResponse: boolean;
 }
 
+export interface PreparedBookCreate {
+  name: string;
+  ownerLogin: string;
+  displayPath: string;
+  dashboardUrl: string;
+}
+
+export interface CreatedBookResult {
+  status: "created";
+  id: string;
+  slug: string;
+  name: string;
+  bookUrl: string;
+  displayPath: string;
+  private: true;
+  reconciledAfterUnknownResponse: boolean;
+}
+
 export interface NormalizedSheetDocument {
   id: string;
   slug: string;
@@ -823,6 +841,129 @@ export class YuqueWebClient {
     );
   }
 
+  assertBookCreateEnabled(): void {
+    this.contracts.getWritable("create_book", "personal");
+  }
+
+  async preparePersonalBookCreate(
+    employeeId: string,
+    name: string,
+  ): Promise<PreparedBookCreate> {
+    const normalizedName = name.trim();
+    if (!normalizedName) throw new Error("Knowledge-base name is required");
+    if (normalizedName.length > 100) {
+      throw new Error("Knowledge-base name must not exceed 100 characters");
+    }
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+    const existing = await this.listAllBooks(employeeId, "personal");
+    if (existing.some((book) => book.name === normalizedName)) {
+      throw new ContractError(
+        "A personal knowledge base with the same name already exists",
+      );
+    }
+    const ownerName = session.account.name?.trim() || session.account.login;
+    return {
+      name: normalizedName,
+      ownerLogin: session.account.login,
+      displayPath: `个人：${ownerName} / ${normalizedName}`,
+      dashboardUrl: `${this.config.personalYuqueHost}/dashboard`,
+    };
+  }
+
+  async createPersonalBook(
+    employeeId: string,
+    input: { name: string; description?: string },
+  ): Promise<CreatedBookResult> {
+    this.assertBookCreateEnabled();
+    const prepared = await this.preparePersonalBookCreate(
+      employeeId,
+      input.name,
+    );
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+    const numericUserId = Number(session.account.id);
+    if (!Number.isSafeInteger(numericUserId) || numericUserId <= 0) {
+      throw new ContractError("Bound personal account ID is not numeric");
+    }
+    let created: Record<string, unknown> | undefined;
+    let reconciledAfterUnknownResponse = false;
+    try {
+      created = asRecord(
+        await this.request(employeeId, "create_book", {
+          body: {
+            description: input.description?.trim() || "",
+            extend_private: 0,
+            name: prepared.name,
+            public: 0,
+            type: "Book",
+            user_id: numericUserId,
+          },
+          baseHost: this.config.personalYuqueHost,
+          referer: prepared.dashboardUrl,
+        }),
+        "Created knowledge-base response",
+      );
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      const reconciled = await this.findCreatedPersonalBook(
+        employeeId,
+        prepared.name,
+      );
+      if (!reconciled) throw new CreateResultUnknownError("KnowledgeBase");
+      created = reconciled;
+      reconciledAfterUnknownResponse = true;
+    }
+    const createdId = requireNumber(created, "id");
+    const createdSlug = requireStringValue(created, "slug");
+    if (
+      created.name !== prepared.name ||
+      created.type !== "Book" ||
+      created.public !== 0 ||
+      created.extend_private !== 0 ||
+      created.organization_id !== 0 ||
+      created.user_id !== numericUserId
+    ) {
+      throw new ContractError(
+        "Created knowledge-base response does not match the private personal target",
+      );
+    }
+    const verified = await this.findCreatedPersonalBook(
+      employeeId,
+      prepared.name,
+      createdId,
+    );
+    if (!verified) {
+      throw new ContractError(
+        "Created knowledge base could not be verified by personal list read-back",
+      );
+    }
+    const owner = asRecord(verified.user, "Knowledge-base owner");
+    if (
+      verified.slug !== createdSlug ||
+      verified.public !== 0 ||
+      verified.extend_private !== 0 ||
+      verified.organization_id !== 0 ||
+      verified.type !== "Book" ||
+      verified.items_count !== 0 ||
+      owner.login !== prepared.ownerLogin
+    ) {
+      throw new ContractError(
+        "Created knowledge-base read-back does not match the private personal target",
+      );
+    }
+    return {
+      status: "created",
+      id: String(createdId),
+      slug: createdSlug,
+      name: prepared.name,
+      bookUrl: `${this.config.personalYuqueHost}/${encodeURIComponent(prepared.ownerLogin)}/${encodeURIComponent(createdSlug)}`,
+      displayPath: prepared.displayPath,
+      private: true,
+      reconciledAfterUnknownResponse,
+    };
+  }
+
   async createDoc(
     employeeId: string,
     input: {
@@ -1261,6 +1402,40 @@ export class YuqueWebClient {
     }
   }
 
+  private async findCreatedPersonalBook(
+    employeeId: string,
+    name: string,
+    expectedId?: number,
+  ): Promise<Record<string, unknown> | undefined> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const raw = await this.request(employeeId, "list_personal_books", {
+        query: { limit: 100, offset: 0 },
+        baseHost: this.config.personalYuqueHost,
+        referer: `${this.config.personalYuqueHost}/dashboard`,
+      });
+      if (!Array.isArray(raw)) {
+        throw new ContractError(
+          "Personal knowledge-base response is not an array",
+        );
+      }
+      const matches = raw
+        .map((value) => asRecord(value, "Personal knowledge base"))
+        .filter(
+          (book) =>
+            book.name === name &&
+            (expectedId === undefined || book.id === expectedId),
+        );
+      if (matches.length > 1) {
+        throw new ContractError(
+          "Multiple personal knowledge bases match the prepared name",
+        );
+      }
+      if (matches[0]) return matches[0];
+      if (attempt < 2) await delay(150);
+    }
+    return undefined;
+  }
+
   private async findCreatedObject(
     employeeId: string,
     target: CreateTarget,
@@ -1607,7 +1782,7 @@ function parseYuqueUrl(
 }
 
 class CreateResultUnknownError extends Error {
-  constructor(resourceType: "Doc" | "Sheet") {
+  constructor(resourceType: "Doc" | "Sheet" | "KnowledgeBase") {
     super(
       `Yuque ${resourceType} creation result is unknown after a network failure; do not retry`,
     );

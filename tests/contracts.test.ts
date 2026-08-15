@@ -95,6 +95,15 @@ describe("web endpoint contracts", () => {
     expect(() =>
       registry.getWritable("save_sheet_content", "personal"),
     ).toThrow("remains disabled");
+    expect(registry.getWritable("create_book", "personal")).toMatchObject({
+      method: "POST",
+      path: "/api/books",
+      idempotent: false,
+      liveWriteEnabled: true,
+    });
+    expect(() => registry.get("create_book", "organization")).toThrow(
+      "organization-host capture and replay verification",
+    );
   });
 
   it("requires an explicit live-write gate in addition to capture verification", async () => {

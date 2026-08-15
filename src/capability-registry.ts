@@ -37,7 +37,7 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
   available("yuque_list_all_docs", personalAndOrganization),
   available("yuque_get_doc", personalAndOrganization),
   available("yuque_get_sheet", personalAndOrganization),
-  disabled("yuque_preview_create_book", "contract_not_verified"),
+  available("yuque_preview_create_book", personal),
   disabled("yuque_preview_update_book", "contract_not_verified"),
   disabled("yuque_preview_change_book_collaborator", "contract_not_verified"),
   disabled("yuque_preview_delete_doc", "contract_not_verified"),

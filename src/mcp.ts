@@ -311,7 +311,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_create_book",
     description:
-      "预览创建私有个人知识库。名称必须匹配部署者允许的测试前缀；创建契约完成真实验证前安全失败。",
+      "预览创建私有个人知识库。只创建到当前扫码账号的个人空间，不创建组织知识库；Confirm前会再次检查同名对象。语雀在确认时生成最终slug，写后回读成功才返回最终URL。",
     inputSchema: {
       type: "object",
       properties: {
@@ -942,7 +942,10 @@ async function callTool(
         markdown: requireString(args, "markdown"),
       });
     case "yuque_preview_create_book":
-      return v03CapabilityBlocked("create_book");
+      return deps.changes.previewCreateBook(employeeId, {
+        name: requireString(args, "name"),
+        description: optionalString(args, "description"),
+      });
     case "yuque_preview_update_book":
       return v03CapabilityBlocked("update_book");
     case "yuque_preview_change_book_collaborator":

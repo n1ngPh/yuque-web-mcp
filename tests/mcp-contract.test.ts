@@ -141,6 +141,37 @@ describe("MCP public surface", () => {
     await server.close();
   });
 
+  it("routes private personal knowledge-base creation through Preview", async () => {
+    const calls: unknown[] = [];
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const server = createMcpServer("employee.a", {
+      changes: {
+        previewCreateBook: async (...args: unknown[]) => {
+          calls.push(args);
+          return {
+            display_path: "个人：Alice / yuque-web-mcp-e2e",
+            target_url: "https://www.yuque.com/dashboard",
+          };
+        },
+      },
+    } as never);
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({
+      name: "yuque_preview_create_book",
+      arguments: { name: "yuque-web-mcp-e2e", description: "sandbox" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(calls).toEqual([
+      ["employee.a", { name: "yuque-web-mcp-e2e", description: "sandbox" }],
+    ]);
+    await client.close();
+    await server.close();
+  });
+
   it("routes explicit personal scope without mutating global Yuque context", async () => {
     const calls: Array<{ name: string; args: unknown[] }> = [];
     const [clientTransport, serverTransport] =

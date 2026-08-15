@@ -83,6 +83,54 @@ export class ChangeStore {
     this.db.purgeExpiredSnapshots();
   }
 
+  async previewCreateBook(
+    ownerId: string,
+    input: { name: string; description?: string },
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    const name = input.name.trim();
+    const description = input.description?.trim() || "";
+    if (!name) throw new Error("Knowledge-base name is required");
+    if (description.length > 2_000) {
+      throw new Error(
+        "Knowledge-base description must not exceed 2000 characters",
+      );
+    }
+    const target = await this.client.preparePersonalBookCreate(ownerId, name);
+    const proposal = [
+      `name: ${name}`,
+      `visibility: private`,
+      `owner: ${target.ownerLogin}`,
+      `description: ${description || "(empty)"}`,
+    ].join("\n");
+    const diff = createTwoFilesPatch(
+      "/dev/null",
+      name,
+      "",
+      proposal,
+      "",
+      "proposed",
+    );
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "create_book",
+        targetUrl: target.dashboardUrl,
+        displayPath: target.displayPath,
+        bookName: name,
+        bookDescription: description,
+        bookVisibility: "private",
+        ownerLogin: target.ownerLogin,
+        resourceType: "KnowledgeBase",
+      },
+      diff,
+      [
+        "Yuque generates the final knowledge-base slug during Confirm; the final URL is returned only after write read-back succeeds.",
+        "Only a private personal knowledge base is created; no organization scope or sidebar quick-link mutation is requested.",
+      ],
+    );
+  }
+
   async previewCreate(
     ownerId: string,
     input: {
@@ -563,6 +611,28 @@ export class ChangeStore {
     ownerId: string,
     payload: PendingChangePayload,
   ): Promise<ExecutionResult> {
+    if (payload.kind === "create_book") {
+      if (
+        !payload.bookName ||
+        payload.bookVisibility !== "private" ||
+        !payload.ownerLogin
+      ) {
+        throw new Error("Stored knowledge-base creation is incomplete");
+      }
+      const created = await this.client.createPersonalBook(ownerId, {
+        name: payload.bookName,
+        description: payload.bookDescription,
+      });
+      if (!created.private || created.name !== payload.bookName) {
+        throw new Error(
+          "Created knowledge-base read-back does not match the Preview",
+        );
+      }
+      return {
+        state: "succeeded",
+        result: { ...created },
+      };
+    }
     if (payload.kind === "create_doc") {
       if (
         !payload.bookUrl ||

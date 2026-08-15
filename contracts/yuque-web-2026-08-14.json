@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-15-embedded-board-43",
-  "verifiedAt": "2026-08-15T04:39:24.000Z",
+  "version": "2026-08-16-personal-book-create-44",
+  "verifiedAt": "2026-08-16T00:00:00.000Z",
   "sourceBundles": [],
   "endpoints": [
     {
@@ -46,6 +46,43 @@
       "path": "/api/collaborations",
       "idempotent": true,
       "requiredResponsePaths": ["data", "meta.permission", "meta.total"]
+    },
+    {
+      "capability": "create_book",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "POST",
+      "path": "/api/books",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.name",
+        "data.slug",
+        "data.type",
+        "data.public",
+        "data.extend_private",
+        "data.user_id",
+        "data.organization_id"
+      ],
+      "verifiedScenarios": [
+        {
+          "id": "private_personal_book_create",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 3,
+          "retryAttempts": 0,
+          "browserStarts": 2,
+          "deleteRequests": 0,
+          "constraints": [
+            "two-account UI capture and one browser-closed replay",
+            "type=Book, public=0 and extend_private=0",
+            "422 validation error left the resource set unchanged",
+            "response and list read-back matched without organization requests"
+          ]
+        }
+      ]
     },
     {
       "capability": "list_organizations",
