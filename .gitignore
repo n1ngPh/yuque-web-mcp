@@ -19,5 +19,4 @@ runtime/
 /deploy/personal-*.mjs
 /deploy/repair-*.mjs
 /deploy/research-*.mjs
-!/deploy/research-lake-runtime.mjs
 /deploy/verify-*.mjs

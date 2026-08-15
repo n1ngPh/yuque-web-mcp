@@ -23,7 +23,7 @@ COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node contracts ./contracts
-COPY --chown=node:node deploy/research-lake-runtime.mjs ./deploy/research-lake-runtime.mjs
+COPY --chown=node:node deploy/lake-runtime.mjs ./deploy/lake-runtime.mjs
 
 USER node
 EXPOSE 3000

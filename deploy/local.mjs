@@ -2,11 +2,15 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const baseRuntimeDir = join(projectRoot, "runtime");
+const configuredRuntimeDir = process.env.LOCAL_RUNTIME_DIR?.trim();
+if (configuredRuntimeDir && !isAbsolute(configuredRuntimeDir)) {
+  throw new Error("LOCAL_RUNTIME_DIR must be an absolute path");
+}
+const baseRuntimeDir = configuredRuntimeDir || join(projectRoot, "runtime");
 const localProfile = parseLocalProfile(process.env.LOCAL_PROFILE);
 const runtimeDir = localProfile
   ? join(baseRuntimeDir, "profiles", localProfile)

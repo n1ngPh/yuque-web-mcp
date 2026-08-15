@@ -11,7 +11,7 @@ export interface LakeHtmlRenderer {
 export class PinnedLakeHtmlRenderer implements LakeHtmlRenderer {
   constructor(
     private readonly workerPath = process.env.LAKE_RUNTIME_WORKER_PATH ??
-      resolve(process.cwd(), "deploy/research-lake-runtime.mjs"),
+      resolve(process.cwd(), "deploy/lake-runtime.mjs"),
     private readonly timeoutMs = 30_000,
   ) {}
 
