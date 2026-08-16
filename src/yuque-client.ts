@@ -21,6 +21,9 @@ import {
   type NormalizedWorkbook,
 } from "./sheet-model.js";
 import { PinnedLakeHtmlRenderer, type LakeHtmlRenderer } from "./lake-html.js";
+import { lakeText } from "./lake-document.js";
+import { createYuqueDispatcher } from "./network-policy.js";
+import type { Dispatcher } from "undici";
 
 export class ReloginRequiredError extends Error {
   constructor() {
@@ -46,6 +49,7 @@ interface RequestOptions {
   body?: unknown;
   referer?: string;
   baseHost?: string;
+  returnEnvelope?: boolean;
 }
 
 export type YuqueScopeType = "personal" | "organization";
@@ -98,6 +102,8 @@ export interface ResourceLockState {
   draftVersion: number;
   lockerPresent: boolean;
   collaboratorCount: number;
+  ownedByClient?: boolean;
+  reconciledAfterUnknownResponse?: boolean;
 }
 
 export interface NormalizedBook {
@@ -163,6 +169,128 @@ export interface CatalogNode {
   docId?: number;
   docSlug?: string;
   docUrl?: string;
+}
+
+export type CatalogChangeAction = "create" | "rename" | "move" | "delete";
+export type CatalogMovePosition = "into" | "after";
+
+export interface CatalogChangeInput {
+  bookUrl: string;
+  action: CatalogChangeAction;
+  nodeUuid?: string;
+  targetUuid?: string;
+  position?: CatalogMovePosition;
+  title?: string;
+  parentUuid?: string;
+  expectedParentPath?: string;
+}
+
+export interface PreparedCatalogChange {
+  book: NormalizedBook;
+  action: CatalogChangeAction;
+  baselineFingerprint: string;
+  baselineNodeUuids: string[];
+  displayPath: string;
+  targetDisplayPath: string;
+  node?: CatalogNode;
+  target?: CatalogNode;
+  title?: string;
+  parentUuid?: string;
+  expectedParentPath?: string;
+  position?: CatalogMovePosition;
+}
+
+export interface NormalizedComment {
+  id: string;
+  parentId?: string;
+  rootId?: string;
+  authorLogin: string;
+  authorName?: string;
+  body: string;
+  bodyAsl: string;
+  format: "lake";
+  createdAt: string;
+  updatedAt: string;
+  fingerprint: string;
+}
+
+export interface CommentListResult {
+  doc: Pick<NormalizedDoc, "id" | "title" | "url" | "bookUrl" | "location">;
+  comments: NormalizedComment[];
+  fingerprint: string;
+  total: number;
+}
+
+export interface PreparedCommentChange {
+  doc: NormalizedDoc;
+  action: "create" | "update" | "delete";
+  current?: NormalizedComment;
+  commentId?: string;
+  body?: string;
+  bodyAsl?: string;
+  bodyHtml?: string;
+  baselineFingerprint: string;
+  displayPath: string;
+}
+
+export interface PreparedObjectDeletion {
+  resourceType: "Doc" | "Sheet";
+  book: NormalizedBook;
+  node: CatalogNode;
+  targetUrl: string;
+  displayPath: string;
+  baseFingerprint: string;
+  version: number;
+  doc?: NormalizedDoc;
+  sheet?: NormalizedSheetDocument;
+}
+
+export interface DeletedObjectResult {
+  status: "trashed";
+  resource_type: "Doc" | "Sheet";
+  deleted_path: string;
+  object_url: string;
+  doc_id: string;
+  catalog_absent: true;
+  direct_read_rejected: true;
+  reconciled_after_unknown_response: boolean;
+}
+
+export interface NormalizedDocVersionSummary {
+  id: string;
+  docId: string;
+  title: string;
+  name?: string;
+  createdAt: string;
+  draft: boolean;
+  released?: boolean;
+  publicationStatus?: number;
+  authorLogin: string;
+  authorName?: string;
+  versionUrl?: string;
+}
+
+export interface NormalizedDocVersionDetail extends NormalizedDocVersionSummary {
+  docType: string;
+  format: string;
+  slug: string;
+  content: string;
+  contentHtml: string;
+  plainText: string;
+  fingerprint: string;
+}
+
+export interface DocVersionListResult {
+  doc: Pick<NormalizedDoc, "id" | "title" | "url" | "bookUrl" | "location">;
+  versions: NormalizedDocVersionSummary[];
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export interface DocVersionDetailResult {
+  doc: Pick<NormalizedDoc, "id" | "title" | "url" | "bookUrl" | "location">;
+  version: NormalizedDocVersionDetail;
 }
 
 export interface DocumentLocation {
@@ -268,6 +396,26 @@ export interface UpdatedBookResult {
   reconciledAfterUnknownResponse: boolean;
 }
 
+export interface PreparedBookDeletion {
+  book: NormalizedBook;
+  catalog: CatalogNode[];
+  displayPath: string;
+  baseFingerprint: string;
+  allowNonempty: boolean;
+}
+
+export interface DeletedBookResult {
+  status: "deleted";
+  deletion_effect: "irreversible_book_removal";
+  deleted_path: string;
+  book_url: string;
+  book_id: string;
+  deleted_catalog_nodes: number;
+  list_absent: true;
+  direct_read_rejected: true;
+  reconciled_after_unknown_response: boolean;
+}
+
 export interface NormalizedSheetDocument {
   id: string;
   slug: string;
@@ -292,13 +440,20 @@ export class YuqueWebClient {
     string,
     { expiresAt: number; documents: LocatedDocument[] }
   >();
+  private readonly dispatcher: Dispatcher | undefined;
 
   constructor(
     private readonly config: AppConfig,
     private readonly contracts: ContractRegistry,
     private readonly sessions: SessionStore,
     private readonly lakeHtml: LakeHtmlRenderer = new PinnedLakeHtmlRenderer(),
-  ) {}
+  ) {
+    this.dispatcher = createYuqueDispatcher(config);
+  }
+
+  async close(): Promise<void> {
+    await this.dispatcher?.close();
+  }
 
   async getUser(employeeId: string): Promise<unknown> {
     return this.request(employeeId, "get_user");
@@ -778,6 +933,880 @@ export class YuqueWebClient {
     return { book, nodes };
   }
 
+  async prepareCatalogChange(
+    employeeId: string,
+    input: CatalogChangeInput,
+  ): Promise<PreparedCatalogChange> {
+    this.assertWriteTargetAllowed(input.bookUrl);
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+    const book = await this.resolveBook(employeeId, input.bookUrl);
+    if (
+      book.scopeType !== "personal" ||
+      book.ownerLogin !== session.account.login ||
+      book.accessType !== "owner" ||
+      !book.private
+    ) {
+      throw new ContractError(
+        "Catalog changes are verified only for a private personal knowledge base owned by the current account",
+      );
+    }
+    const nodes = await this.loadCatalog(employeeId, book);
+    const baselineFingerprint = catalogFingerprint(nodes);
+    const baselineNodeUuids = nodes.map((node) => node.uuid).sort();
+    const bookPath = `${book.scopeLabel} / ${book.name}`;
+    const findNode = (uuid: string | undefined, field: string): CatalogNode => {
+      if (!uuid) throw new Error(`${field} is required`);
+      const node = nodes.find((candidate) => candidate.uuid === uuid);
+      if (!node) throw new Error(`${field} does not identify a catalog node`);
+      return node;
+    };
+
+    if (input.action === "create") {
+      const title = normalizeCatalogTitle(input.title);
+      const parentUuid = input.parentUuid?.trim() || undefined;
+      const parent = parentUuid
+        ? findNode(parentUuid, "parent_uuid")
+        : undefined;
+      if (parent && parent.type !== "TITLE") {
+        throw new Error("parent_uuid must identify a directory group");
+      }
+      const parentPath = parent?.displayPath ?? bookPath;
+      if (
+        input.expectedParentPath?.trim() &&
+        input.expectedParentPath.trim() !== parentPath
+      ) {
+        throw new ContractError(
+          `Expected parent path does not match the current catalog: ${parentPath}`,
+        );
+      }
+      assertUniqueCatalogTitle(nodes, parentUuid, title);
+      return {
+        book,
+        action: "create",
+        title,
+        ...(parentUuid ? { parentUuid } : {}),
+        ...(input.expectedParentPath
+          ? { expectedParentPath: input.expectedParentPath.trim() }
+          : {}),
+        baselineFingerprint,
+        baselineNodeUuids,
+        displayPath: parentPath,
+        targetDisplayPath: `${parentPath} / ${title}`,
+      };
+    }
+
+    const node = findNode(input.nodeUuid, "node_uuid");
+    if (input.action === "rename") {
+      if (node.type !== "TITLE") {
+        throw new ContractError(
+          "Catalog rename is restricted to directory TITLE nodes",
+        );
+      }
+      const title = normalizeCatalogTitle(input.title);
+      if (title === node.title) throw new Error("Directory title is unchanged");
+      assertUniqueCatalogTitle(nodes, node.parentUuid, title, node.uuid);
+      const parentPath = node.fullPath.slice(0, -1).join(" / ");
+      return {
+        book,
+        action: "rename",
+        node,
+        title,
+        baselineFingerprint,
+        baselineNodeUuids,
+        displayPath: node.displayPath,
+        targetDisplayPath: `${parentPath} / ${title}`,
+      };
+    }
+    if (input.action === "move") {
+      if (node.type !== "TITLE" && node.type !== "DOC") {
+        throw new ContractError(
+          "Catalog move is verified only for directory, Doc and Sheet entries",
+        );
+      }
+      const target = findNode(input.targetUuid, "target_uuid");
+      const position = input.position;
+      if (position !== "into" && position !== "after") {
+        throw new Error("position must be into or after");
+      }
+      if (target.uuid === node.uuid) {
+        throw new Error("A directory cannot be moved relative to itself");
+      }
+      if (position === "into" && target.type !== "TITLE") {
+        throw new Error("position=into requires a directory target");
+      }
+      if (
+        node.type === "TITLE" &&
+        catalogNodeIsDescendant(nodes, target, node.uuid)
+      ) {
+        throw new Error("A directory cannot be moved into its descendant");
+      }
+      const targetParentUuid =
+        position === "into" ? target.uuid : target.parentUuid;
+      const parentPath =
+        position === "into"
+          ? target.displayPath
+          : target.fullPath.slice(0, -1).join(" / ");
+      assertUniqueCatalogTitle(nodes, targetParentUuid, node.title, node.uuid);
+      return {
+        book,
+        action: "move",
+        node,
+        target,
+        position,
+        baselineFingerprint,
+        baselineNodeUuids,
+        displayPath: node.displayPath,
+        targetDisplayPath: `${parentPath} / ${node.title}`,
+      };
+    }
+    if (input.action === "delete") {
+      if (node.type !== "TITLE") {
+        throw new ContractError(
+          "Catalog deletion is restricted to empty directory TITLE nodes; use the dedicated Doc or Sheet deletion Preview for whole objects",
+        );
+      }
+      const children = nodes.filter(
+        (candidate) => candidate.parentUuid === node.uuid,
+      );
+      if (children.length > 0) {
+        throw new ContractError(
+          "Non-empty directory deletion is disabled; move or delete every child explicitly first",
+        );
+      }
+      return {
+        book,
+        action: "delete",
+        node,
+        baselineFingerprint,
+        baselineNodeUuids,
+        displayPath: node.displayPath,
+        targetDisplayPath: node.displayPath,
+      };
+    }
+    throw new Error("Unsupported catalog action");
+  }
+
+  assertCatalogChangeEnabled(targetUrl: string): void {
+    this.assertWriteTargetAllowed(targetUrl);
+    this.contracts.getWritable("change_catalog", "personal");
+  }
+
+  async changeCatalog(
+    employeeId: string,
+    input: CatalogChangeInput & { baselineFingerprint: string },
+  ): Promise<Record<string, unknown>> {
+    this.assertCatalogChangeEnabled(input.bookUrl);
+    const prepared = await this.prepareCatalogChange(employeeId, input);
+    if (prepared.baselineFingerprint !== input.baselineFingerprint) {
+      throw new ContractError(
+        "Catalog changed after Preview; no write was attempted",
+      );
+    }
+    const requestBody = (fields: Record<string, unknown>) => ({
+      book_id: prepared.book.id,
+      format: "list",
+      ...fields,
+    });
+    if (prepared.action === "create") {
+      const inserted = await this.insertCatalogGroup(
+        employeeId,
+        prepared,
+        requestBody,
+      );
+      let renameError: unknown;
+      try {
+        await this.request(employeeId, "change_catalog", {
+          body: requestBody({
+            action: "edit",
+            node_uuid: inserted.uuid,
+            title: prepared.title,
+          }),
+          baseHost: prepared.book.host,
+          referer: `${prepared.book.url}/toc`,
+        });
+      } catch (error) {
+        renameError = error;
+      }
+      const current = await this.waitForCatalog(
+        employeeId,
+        prepared.book,
+        (nodes) =>
+          nodes.some(
+            (node) =>
+              node.uuid === inserted.uuid && node.title === prepared.title,
+          ),
+      );
+      const created = current.find((node) => node.uuid === inserted.uuid);
+      if (!created || created.title !== prepared.title) {
+        return {
+          status: "partial_created_unrenamed",
+          node_uuid: inserted.uuid,
+          display_path: created?.displayPath ?? prepared.displayPath,
+          ...(renameError ? { error_code: "catalog_rename_failed" } : {}),
+        };
+      }
+      this.invalidateDocumentIndex(employeeId);
+      return {
+        status: "created",
+        node_uuid: created.uuid,
+        display_path: created.displayPath,
+        book_url: prepared.book.url,
+        catalog_fingerprint: catalogFingerprint(current),
+      };
+    }
+
+    const node = prepared.node;
+    if (!node) throw new Error("Prepared catalog node is missing");
+    const body =
+      prepared.action === "rename"
+        ? requestBody({
+            action: "edit",
+            node_uuid: node.uuid,
+            title: prepared.title,
+          })
+        : prepared.action === "move"
+          ? requestBody({
+              action:
+                prepared.position === "into" ? "prependChild" : "moveAfter",
+              node_uuid: node.uuid,
+              target_uuid: prepared.target?.uuid,
+            })
+          : requestBody({
+              action: "destroyWithChildren",
+              has_child: false,
+              node_uuid: node.uuid,
+            });
+    const response = await this.request(employeeId, "change_catalog", {
+      body,
+      baseHost: prepared.book.host,
+      referer: `${prepared.book.url}/toc`,
+    });
+    if (!Array.isArray(response)) {
+      throw new ContractError("Catalog write response data is not an array");
+    }
+    const expectedParentUuid =
+      prepared.action === "move"
+        ? prepared.position === "into"
+          ? prepared.target?.uuid
+          : prepared.target?.parentUuid
+        : undefined;
+    const current = await this.waitForCatalog(
+      employeeId,
+      prepared.book,
+      (nodes) => {
+        const candidate = nodes.find((item) => item.uuid === node.uuid);
+        if (prepared.action === "delete") return candidate === undefined;
+        if (!candidate) return false;
+        if (prepared.action === "rename") {
+          return candidate.title === prepared.title;
+        }
+        return (candidate.parentUuid ?? "") === (expectedParentUuid ?? "");
+      },
+    );
+    const verified = current.find((candidate) => candidate.uuid === node.uuid);
+    if (prepared.action === "delete") {
+      if (verified) {
+        throw new ContractError(
+          "Yuque accepted directory deletion but the node remains in read-back",
+        );
+      }
+      this.invalidateDocumentIndex(employeeId);
+      return {
+        status: "deleted",
+        deleted_path: prepared.displayPath,
+        book_url: prepared.book.url,
+        catalog_fingerprint: catalogFingerprint(current),
+      };
+    }
+    if (!verified) {
+      throw new ContractError(
+        "Catalog node disappeared after a non-delete write",
+      );
+    }
+    if (prepared.action === "rename" && verified.title !== prepared.title) {
+      throw new ContractError(
+        "Directory rename read-back does not match Preview",
+      );
+    }
+    if (prepared.action === "move") {
+      if ((verified.parentUuid ?? "") !== (expectedParentUuid ?? "")) {
+        throw new ContractError(
+          "Directory move read-back parent does not match",
+        );
+      }
+    }
+    this.invalidateDocumentIndex(employeeId);
+    return {
+      status: prepared.action === "rename" ? "renamed" : "moved",
+      node_uuid: verified.uuid,
+      display_path: verified.displayPath,
+      book_url: prepared.book.url,
+      catalog_fingerprint: catalogFingerprint(current),
+    };
+  }
+
+  async listComments(
+    employeeId: string,
+    docUrl: string,
+  ): Promise<CommentListResult> {
+    const doc = await this.getDoc(employeeId, docUrl);
+    const rawDoc = asRecord(doc.raw, "Comment target document");
+    if (rawDoc.type === "Sheet" || doc.format === "lakesheet") {
+      throw new ContractError("Document comments are not verified for Sheet");
+    }
+    const targetUrl = doc.url ?? docUrl.replace(/\/$/, "");
+    const baseHost = parseYuqueUrl(targetUrl, this.allowedYuqueHosts()).origin;
+    const raw = asRecord(
+      await this.request(employeeId, "list_comments", {
+        query: {
+          commentable_id: doc.id,
+          commentable_type: "Doc",
+          include_reactions: true,
+          include_section: true,
+          include_to_user: true,
+        },
+        referer: targetUrl,
+        baseHost,
+      }),
+      "Comment list",
+    );
+    const roots = raw.comments;
+    if (!Array.isArray(roots)) {
+      throw new ContractError("Yuque comment list is not an array");
+    }
+    const comments = normalizeCommentTree(roots);
+    const meta = optionalRecord(raw.meta);
+    const total = optionalNonNegativeNumber(meta?.total) ?? comments.length;
+    return {
+      doc: {
+        id: doc.id,
+        title: doc.title,
+        url: targetUrl,
+        bookUrl: doc.bookUrl,
+        location: doc.location,
+      },
+      comments,
+      fingerprint: commentCollectionFingerprint(comments),
+      total,
+    };
+  }
+
+  async listDocVersions(
+    employeeId: string,
+    docUrl: string,
+    offset = 0,
+    limit = 200,
+  ): Promise<DocVersionListResult> {
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new Error("Version offset must be a non-negative integer");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error("Version limit must be an integer from 1 to 200");
+    }
+    const doc = await this.getDoc(employeeId, docUrl);
+    const rawDoc = asRecord(doc.raw, "Version target document");
+    if (rawDoc.type === "Sheet" || doc.format === "lakesheet") {
+      throw new ContractError(
+        "Document version history is not verified for Sheet",
+      );
+    }
+    const targetUrl = doc.url ?? docUrl.replace(/\/$/, "");
+    const baseHost = parseYuqueUrl(targetUrl, this.allowedYuqueHosts()).origin;
+    const raw = await this.request(employeeId, "list_doc_versions", {
+      query: {
+        doc_id: doc.id,
+        doc_type: optionalStringValue(rawDoc.type) ?? "Doc",
+        offset,
+        limit,
+      },
+      referer: `${targetUrl}/edit`,
+      baseHost,
+    });
+    if (!Array.isArray(raw)) {
+      throw new ContractError("Yuque document version list is not an array");
+    }
+    const versions = raw.map((value) =>
+      normalizeDocVersionSummary(value, doc.id, baseHost),
+    );
+    return {
+      doc: docVersionDocument(doc, targetUrl),
+      versions,
+      offset,
+      limit,
+      hasMore: versions.length === limit,
+    };
+  }
+
+  async getDocVersion(
+    employeeId: string,
+    docUrl: string,
+    versionId: string,
+  ): Promise<DocVersionDetailResult> {
+    if (!/^[1-9][0-9]*$/.test(versionId)) {
+      throw new Error("version_id must be a positive numeric identifier");
+    }
+    const doc = await this.getDoc(employeeId, docUrl);
+    const rawDoc = asRecord(doc.raw, "Version target document");
+    if (rawDoc.type === "Sheet" || doc.format === "lakesheet") {
+      throw new ContractError(
+        "Document version history is not verified for Sheet",
+      );
+    }
+    const targetUrl = doc.url ?? docUrl.replace(/\/$/, "");
+    const baseHost = parseYuqueUrl(targetUrl, this.allowedYuqueHosts()).origin;
+    const raw = await this.request(employeeId, "get_doc_version", {
+      pathParams: { versionId },
+      query: { doc_id: doc.id },
+      referer: `${targetUrl}/edit`,
+      baseHost,
+    });
+    const version = normalizeDocVersionDetail(raw, doc.id, baseHost);
+    if (version.id !== versionId) {
+      throw new ContractError(
+        "Yuque document version detail ID does not match the requested version",
+      );
+    }
+    return {
+      doc: docVersionDocument(doc, targetUrl),
+      version,
+    };
+  }
+
+  async prepareCommentChange(
+    employeeId: string,
+    input: {
+      docUrl: string;
+      action: "create" | "update" | "delete";
+      commentId?: string;
+      body?: string;
+    },
+  ): Promise<PreparedCommentChange> {
+    this.assertWriteTargetAllowed(input.docUrl);
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+    const listed = await this.listComments(employeeId, input.docUrl);
+    const doc = await this.getDoc(employeeId, input.docUrl);
+    const displayPath = `${doc.location.displayPath} / 评论`;
+    if (input.action === "create") {
+      if (input.commentId) {
+        throw new Error("comment_id must be omitted for comment creation");
+      }
+      const body = normalizeCommentBody(input.body);
+      const bodyAsl = await this.convertMarkdownToLake(
+        employeeId,
+        body,
+        input.docUrl,
+      );
+      return {
+        doc,
+        action: "create",
+        body,
+        bodyAsl,
+        bodyHtml: await this.lakeHtml.render(bodyAsl),
+        baselineFingerprint: listed.fingerprint,
+        displayPath: `${displayPath} / 新评论`,
+      };
+    }
+    const commentId = normalizePositiveId(input.commentId, "comment_id");
+    const matches = listed.comments.filter(
+      (comment) => comment.id === commentId,
+    );
+    if (matches.length !== 1) {
+      throw new Error("comment_id does not identify one visible comment");
+    }
+    const current = matches[0]!;
+    if (current.authorLogin !== session.account.login) {
+      throw new ContractError(
+        "v0.4 comment update/delete is restricted to the current employee's own comments",
+      );
+    }
+    if (input.action === "delete") {
+      if (input.body !== undefined) {
+        throw new Error("body must be omitted for comment deletion");
+      }
+      return {
+        doc,
+        action: "delete",
+        commentId,
+        current,
+        baselineFingerprint: listed.fingerprint,
+        displayPath: `${displayPath} #${commentId}`,
+      };
+    }
+    if (input.action !== "update") {
+      throw new Error("Unsupported comment action");
+    }
+    const body = normalizeCommentBody(input.body);
+    if (body === current.body) throw new Error("Comment body is unchanged");
+    const bodyAsl = await this.convertMarkdownToLake(
+      employeeId,
+      body,
+      input.docUrl,
+    );
+    return {
+      doc,
+      action: "update",
+      commentId,
+      current,
+      body,
+      bodyAsl,
+      bodyHtml: await this.lakeHtml.render(bodyAsl),
+      baselineFingerprint: listed.fingerprint,
+      displayPath: `${displayPath} #${commentId}`,
+    };
+  }
+
+  async changeComment(
+    employeeId: string,
+    input: {
+      docUrl: string;
+      action: "create" | "update" | "delete";
+      commentId?: string;
+      body?: string;
+      bodyAsl?: string;
+      bodyHtml?: string;
+      baselineFingerprint: string;
+    },
+  ): Promise<Record<string, unknown>> {
+    this.assertWriteTargetAllowed(input.docUrl);
+    const capability =
+      input.action === "create"
+        ? "create_comment"
+        : input.action === "update"
+          ? "update_comment"
+          : "delete_comment";
+    this.contracts.getWritable(capability, "personal");
+    const before = await this.listComments(employeeId, input.docUrl);
+    if (before.fingerprint !== input.baselineFingerprint) {
+      throw new ContractError(
+        "Comments changed after Preview; no write was attempted",
+      );
+    }
+    const targetUrl = before.doc.url ?? input.docUrl;
+    const baseHost = parseYuqueUrl(targetUrl, this.allowedYuqueHosts()).origin;
+    if (input.action === "create") {
+      if (!input.body || !input.bodyAsl || !input.bodyHtml) {
+        throw new Error("Prepared comment creation is incomplete");
+      }
+      const raw = asRecord(
+        await this.request(employeeId, "create_comment", {
+          body: {
+            body: input.bodyHtml,
+            body_asl: input.bodyAsl,
+            commentable_id: Number(before.doc.id),
+            commentable_type: "Doc",
+            format: "lake",
+            mention: null,
+            page: null,
+            parent_id: null,
+            rect: null,
+          },
+          referer: targetUrl,
+          baseHost,
+        }),
+        "Created comment",
+      );
+      const createdId = String(requireNumber(raw, "id"));
+      const after = await this.listComments(employeeId, input.docUrl);
+      const created = after.comments.find(
+        (comment) => comment.id === createdId,
+      );
+      if (!created || created.bodyAsl !== input.bodyAsl) {
+        throw new ContractError(
+          "Yuque accepted comment creation but read-back did not match",
+        );
+      }
+      return {
+        status: "created",
+        comment_id: created.id,
+        display_path: `${before.doc.location.displayPath} / 评论 #${created.id}`,
+        doc_url: targetUrl,
+        fingerprint: created.fingerprint,
+      };
+    }
+    const commentId = normalizePositiveId(input.commentId, "comment_id");
+    const current = before.comments.find((comment) => comment.id === commentId);
+    if (!current) {
+      throw new ContractError("Prepared comment disappeared before Confirm");
+    }
+    if (input.action === "update") {
+      if (!input.body || !input.bodyAsl || !input.bodyHtml) {
+        throw new Error("Prepared comment update is incomplete");
+      }
+      await this.request(employeeId, "update_comment", {
+        pathParams: { commentId },
+        body: {
+          body: input.bodyHtml,
+          body_asl: input.bodyAsl,
+          format: "lake",
+          mention: null,
+        },
+        referer: targetUrl,
+        baseHost,
+      });
+      const after = await this.listComments(employeeId, input.docUrl);
+      const updated = after.comments.find(
+        (comment) => comment.id === commentId,
+      );
+      if (!updated || updated.bodyAsl !== input.bodyAsl) {
+        throw new ContractError(
+          "Yuque accepted comment update but read-back did not match",
+        );
+      }
+      return {
+        status: "updated",
+        comment_id: updated.id,
+        display_path: `${before.doc.location.displayPath} / 评论 #${updated.id}`,
+        doc_url: targetUrl,
+        fingerprint: updated.fingerprint,
+      };
+    }
+    await this.request(employeeId, "delete_comment", {
+      pathParams: { commentId },
+      referer: targetUrl,
+      baseHost,
+    });
+    const after = await this.listComments(employeeId, input.docUrl);
+    if (after.comments.some((comment) => comment.id === commentId)) {
+      throw new ContractError(
+        "Yuque accepted comment deletion but the comment remains visible",
+      );
+    }
+    return {
+      status: "deleted",
+      comment_id: commentId,
+      deleted_path: `${before.doc.location.displayPath} / 评论 #${commentId}`,
+      doc_url: targetUrl,
+    };
+  }
+
+  async prepareObjectDeletion(
+    employeeId: string,
+    input: { docUrl: string; resourceType: "Doc" | "Sheet" },
+  ): Promise<PreparedObjectDeletion> {
+    this.assertWriteTargetAllowed(input.docUrl);
+    if (this.contractHostTypeForTarget(input.docUrl) !== "personal") {
+      throw new ContractError(
+        "Whole-object deletion is verified only for the personal Yuque Host",
+      );
+    }
+    const resource =
+      input.resourceType === "Sheet"
+        ? await this.getSheet(employeeId, input.docUrl)
+        : await this.getDoc(employeeId, input.docUrl);
+    if (
+      input.resourceType === "Doc" &&
+      (resource as NormalizedDoc).format === "lakesheet"
+    ) {
+      throw new ContractError(
+        "The target is a Sheet; use yuque_preview_delete_sheet",
+      );
+    }
+    const targetUrl = resource.url ?? input.docUrl.replace(/\/$/u, "");
+    const book = await this.getBook(employeeId, resource.bookUrl);
+    if (
+      book.scopeType !== "personal" ||
+      book.accessType !== "owner" ||
+      book.ownerLogin !== book.groupLogin ||
+      !book.private
+    ) {
+      throw new ContractError(
+        "Whole-object deletion is restricted to an owned private personal knowledge base",
+      );
+    }
+    const toc = await this.getToc(employeeId, book.url);
+    const matches = toc.nodes.filter(
+      (node) =>
+        node.type === "DOC" &&
+        String(node.docId ?? "") === resource.id &&
+        node.docUrl === targetUrl,
+    );
+    if (matches.length !== 1) {
+      throw new ContractError(
+        "The target does not resolve to exactly one catalog document node",
+      );
+    }
+    const node = matches[0]!;
+    const contentFingerprint =
+      input.resourceType === "Sheet"
+        ? (resource as NormalizedSheetDocument).workbook.fingerprint
+        : (resource as NormalizedDoc).fingerprint;
+    return {
+      resourceType: input.resourceType,
+      book,
+      node,
+      targetUrl,
+      displayPath: node.displayPath,
+      baseFingerprint: objectDeletionFingerprint({
+        resourceType: input.resourceType,
+        bookId: book.id,
+        nodeUuid: node.uuid,
+        docId: resource.id,
+        title: resource.title,
+        version: resource.version,
+        contentFingerprint,
+      }),
+      version: resource.version,
+      ...(input.resourceType === "Sheet"
+        ? { sheet: resource as NormalizedSheetDocument }
+        : { doc: resource as NormalizedDoc }),
+    };
+  }
+
+  async deleteObject(
+    employeeId: string,
+    input: {
+      docUrl: string;
+      resourceType: "Doc" | "Sheet";
+      baselineFingerprint: string;
+    },
+  ): Promise<DeletedObjectResult> {
+    this.assertWriteTargetAllowed(input.docUrl);
+    const capability: CapabilityName =
+      input.resourceType === "Sheet" ? "delete_sheet" : "delete_doc";
+    this.contracts.getWritable(capability, "personal");
+    const prepared = await this.prepareObjectDeletion(employeeId, input);
+    if (prepared.baseFingerprint !== input.baselineFingerprint) {
+      throw new ContractError(
+        "The target object changed after Preview; no deletion request was sent",
+      );
+    }
+    let reconciledAfterUnknownResponse = false;
+    try {
+      const envelope = asRecord(
+        await this.request(employeeId, capability, {
+          body: {
+            action: "destroyWithChildren",
+            book_id: prepared.book.id,
+            format: "list",
+            has_child: false,
+            node_uuid: prepared.node.uuid,
+          },
+          baseHost: prepared.book.host,
+          referer: prepared.targetUrl,
+          returnEnvelope: true,
+        }),
+        "Object deletion response",
+      );
+      const meta = asRecord(envelope.meta, "Object deletion metadata");
+      const deletedDocIds = Array.isArray(meta.deletedDocIds)
+        ? meta.deletedDocIds.map(String)
+        : [];
+      if (
+        meta.book_id !== prepared.book.id ||
+        meta.node_uuid !== prepared.node.uuid ||
+        typeof meta.toc_updated_at !== "string" ||
+        deletedDocIds.length !== 1 ||
+        deletedDocIds[0] !== String(prepared.node.docId)
+      ) {
+        throw new ContractError(
+          "Object deletion response affected an unexpected document set",
+        );
+      }
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      reconciledAfterUnknownResponse = true;
+    }
+
+    this.invalidateDocumentIndex(employeeId);
+    const toc = await this.getToc(employeeId, prepared.book.url);
+    const catalogAbsent = !toc.nodes.some(
+      (node) =>
+        node.uuid === prepared.node.uuid ||
+        String(node.docId ?? "") === String(prepared.node.docId),
+    );
+    let directReadRejected = false;
+    try {
+      if (input.resourceType === "Sheet") {
+        await this.getSheet(employeeId, prepared.targetUrl);
+      } else {
+        await this.getDoc(employeeId, prepared.targetUrl);
+      }
+    } catch (error) {
+      if (error instanceof YuqueHttpError && error.status === 404) {
+        directReadRejected = true;
+      } else {
+        throw error;
+      }
+    }
+    if (!catalogAbsent || !directReadRejected) {
+      const error = new Error(
+        "Object deletion result is unknown after read-back; do not retry",
+      );
+      error.name = "DeletionResultUnknownError";
+      throw error;
+    }
+    return {
+      status: "trashed",
+      resource_type: input.resourceType,
+      deleted_path: prepared.displayPath,
+      object_url: prepared.targetUrl,
+      doc_id: String(prepared.node.docId),
+      catalog_absent: true,
+      direct_read_rejected: true,
+      reconciled_after_unknown_response: reconciledAfterUnknownResponse,
+    };
+  }
+
+  private async insertCatalogGroup(
+    employeeId: string,
+    prepared: PreparedCatalogChange,
+    requestBody: (fields: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<CatalogNode> {
+    let response: unknown;
+    try {
+      response = await this.request(employeeId, "change_catalog", {
+        body: requestBody({
+          action: "insert",
+          target_uuid: prepared.parentUuid ?? null,
+          type: "TITLE",
+        }),
+        baseHost: prepared.book.host,
+        referer: `${prepared.book.url}/toc`,
+      });
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+    }
+    const baseline = new Set(prepared.baselineNodeUuids);
+    const findCandidates = (nodes: CatalogNode[]) =>
+      nodes.filter(
+        (node) =>
+          !baseline.has(node.uuid) &&
+          node.type === "TITLE" &&
+          (node.parentUuid ?? "") === (prepared.parentUuid ?? ""),
+      );
+    const responseNodes = Array.isArray(response)
+      ? normalizeCatalog(response, prepared.book)
+      : await this.waitForCatalog(
+          employeeId,
+          prepared.book,
+          (nodes) => findCandidates(nodes).length === 1,
+        );
+    const candidates = findCandidates(responseNodes);
+    if (candidates.length !== 1) {
+      throw new ContractError(
+        "Catalog insert result is unknown; do not retry. Re-read the directory and reconcile manually.",
+      );
+    }
+    return candidates[0]!;
+  }
+
+  private async waitForCatalog(
+    employeeId: string,
+    book: NormalizedBook,
+    expected: (nodes: CatalogNode[]) => boolean,
+  ): Promise<CatalogNode[]> {
+    const delaysMs = [0, 150, 350, 700, 1_200];
+    let current: CatalogNode[] = [];
+    for (const delayMs of delaysMs) {
+      if (delayMs > 0) await delay(delayMs);
+      current = await this.loadCatalog(employeeId, book);
+      if (expected(current)) return current;
+    }
+    return current;
+  }
+
   async listDocs(
     employeeId: string,
     bookUrl: string,
@@ -1024,11 +2053,61 @@ export class YuqueWebClient {
     ) {
       throw new ContractError("Doc lock holder has an unexpected shape");
     }
+    const locker = doc.locker as Record<string, unknown> | null;
     return {
       draftVersion: requireNumber(doc, "draft_version"),
-      lockerPresent: doc.locker !== null,
+      lockerPresent: locker !== null,
       collaboratorCount: collaborators.length,
+      ...(locker !== null
+        ? { ownedByClient: locker.uuid === this.docLockClientUuid }
+        : {}),
     };
+  }
+
+  async acquireResourceLock(
+    employeeId: string,
+    input: { docId: string; docUrl: string },
+  ): Promise<ResourceLockState> {
+    const locator = parseYuqueUrl(input.docUrl, this.allowedYuqueHosts());
+    try {
+      await this.request(employeeId, "acquire_doc_lock", {
+        pathParams: { docId: input.docId },
+        body: { uuid: this.docLockClientUuid },
+        referer: `${input.docUrl.replace(/\/$/, "").replace(/\/edit$/, "")}/edit`,
+        baseHost: locator.origin,
+      });
+      return this.getResourceLockState(employeeId, input);
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      const reconciled = await this.getResourceLockState(
+        employeeId,
+        input,
+      ).catch(() => undefined);
+      if (!reconciled?.ownedByClient) throw error;
+      return { ...reconciled, reconciledAfterUnknownResponse: true };
+    }
+  }
+
+  async releaseResourceLock(
+    employeeId: string,
+    input: { docId: string; docUrl: string },
+  ): Promise<void> {
+    const locator = parseYuqueUrl(input.docUrl, this.allowedYuqueHosts());
+    try {
+      await this.request(employeeId, "release_doc_lock", {
+        pathParams: { docId: input.docId },
+        body: { uuid: this.docLockClientUuid },
+        referer: `${input.docUrl.replace(/\/$/, "").replace(/\/edit$/, "")}/edit`,
+        baseHost: locator.origin,
+      });
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      const reconciled = await this.getResourceLockState(
+        employeeId,
+        input,
+      ).catch(() => undefined);
+      if (!reconciled || reconciled.ownedByClient === true) throw error;
+    }
   }
 
   async getSheet(
@@ -1450,6 +2529,128 @@ export class YuqueWebClient {
     };
   }
 
+  async prepareBookDeletion(
+    employeeId: string,
+    input: { bookUrl: string; allowNonempty: boolean },
+  ): Promise<PreparedBookDeletion> {
+    this.assertWriteTargetAllowed(input.bookUrl);
+    if (this.contractHostTypeForTarget(input.bookUrl) !== "personal") {
+      throw new ContractError(
+        "Knowledge-base deletion is verified only for the personal Yuque Host",
+      );
+    }
+    const book = await this.getBook(employeeId, input.bookUrl);
+    if (
+      book.scopeType !== "personal" ||
+      book.accessType !== "owner" ||
+      book.ownerLogin !== book.groupLogin ||
+      !book.private
+    ) {
+      throw new ContractError(
+        "Knowledge-base deletion is restricted to an owned private personal knowledge base",
+      );
+    }
+    const toc = await this.getToc(employeeId, book.url);
+    if (toc.nodes.length > 0 && !input.allowNonempty) {
+      throw new Error(
+        "The knowledge base is non-empty; review its full catalog and preview again with allow_nonempty=true",
+      );
+    }
+    return {
+      book,
+      catalog: toc.nodes,
+      displayPath: `${book.scopeLabel} / ${book.name}`,
+      baseFingerprint: fingerprint({
+        operation: "delete_book",
+        book: bookFingerprint(book),
+        catalog: catalogFingerprint(toc.nodes),
+      }),
+      allowNonempty: input.allowNonempty,
+    };
+  }
+
+  async deleteBook(
+    employeeId: string,
+    input: {
+      bookUrl: string;
+      allowNonempty: boolean;
+      baselineFingerprint: string;
+    },
+  ): Promise<DeletedBookResult> {
+    this.assertWriteTargetAllowed(input.bookUrl);
+    this.contracts.getWritable("delete_book", "personal");
+    const prepared = await this.prepareBookDeletion(employeeId, input);
+    if (prepared.baseFingerprint !== input.baselineFingerprint) {
+      throw new ContractError(
+        "The knowledge base or its catalog changed after Preview; no deletion request was sent",
+      );
+    }
+    let reconciledAfterUnknownResponse = false;
+    let uncertainError: unknown;
+    try {
+      const envelope = asRecord(
+        await this.request(employeeId, "delete_book", {
+          pathParams: { bookId: prepared.book.id },
+          baseHost: prepared.book.host,
+          referer: `${prepared.book.url}/settings/advanced`,
+          returnEnvelope: true,
+        }),
+        "Knowledge-base deletion response",
+      );
+      const deleted = asRecord(envelope.data, "Deleted knowledge base");
+      if (
+        String(requireNumber(deleted, "id")) !== String(prepared.book.id) ||
+        requireStringValue(deleted, "slug") !== prepared.book.slug ||
+        requireStringValue(deleted, "name") !== prepared.book.name ||
+        requireStringValue(deleted, "type") !== "Book" ||
+        requireNumber(deleted, "organization_id") !== 0 ||
+        requireNumber(deleted, "public") !== 0
+      ) {
+        throw new ContractError(
+          "Knowledge-base deletion response does not match the prepared target",
+        );
+      }
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      reconciledAfterUnknownResponse = true;
+      uncertainError = error;
+    }
+
+    const books = await this.listAllBooks(employeeId, "personal");
+    const listAbsent = !books.some(
+      (book) =>
+        book.id === prepared.book.id ||
+        book.url === prepared.book.url ||
+        (book.ownerLogin === prepared.book.ownerLogin &&
+          book.slug === prepared.book.slug),
+    );
+    let directReadRejected = false;
+    try {
+      await this.getBook(employeeId, prepared.book.url);
+    } catch {
+      directReadRejected = true;
+    }
+    if (!listAbsent || !directReadRejected) {
+      if (uncertainError) throw uncertainError;
+      const error = new Error(
+        "Knowledge-base deletion result is unknown after read-back; do not retry",
+      );
+      error.name = "DeletionResultUnknownError";
+      throw error;
+    }
+    return {
+      status: "deleted",
+      deletion_effect: "irreversible_book_removal",
+      deleted_path: prepared.displayPath,
+      book_url: prepared.book.url,
+      book_id: String(prepared.book.id),
+      deleted_catalog_nodes: prepared.catalog.length,
+      list_absent: true,
+      direct_read_rejected: true,
+      reconciled_after_unknown_response: reconciledAfterUnknownResponse,
+    };
+  }
+
   async createDoc(
     employeeId: string,
     input: {
@@ -1595,17 +2796,45 @@ export class YuqueWebClient {
       lakeContent: string;
       referer: string;
     },
-  ): Promise<{ response: unknown; bodyHtml: string }> {
+  ): Promise<{
+    response: unknown;
+    bodyHtml: string;
+    reconciledAfterUnknownResponse: boolean;
+  }> {
     this.assertDocContentUpdateEnabled(input.referer);
     const bodyHtml = await this.lakeHtml.render(input.lakeContent);
-    const response = await this.updateDocNativeDraft(employeeId, {
-      docId: input.docId,
-      draftVersion: input.draftVersion,
-      bodyAsl: input.lakeContent,
-      bodyHtml,
-      referer: input.referer,
-    });
-    return { response, bodyHtml };
+    try {
+      const response = await this.updateDocNativeDraft(employeeId, {
+        docId: input.docId,
+        draftVersion: input.draftVersion,
+        bodyAsl: input.lakeContent,
+        bodyHtml,
+        referer: input.referer,
+      });
+      return {
+        response,
+        bodyHtml,
+        reconciledAfterUnknownResponse: false,
+      };
+    } catch (error) {
+      if (!isUncertainNetworkError(error)) throw error;
+      const reconciled = await this.getDocEditorDraft(
+        employeeId,
+        input.referer.replace(/\/edit$/, ""),
+      ).catch(() => undefined);
+      if (
+        !reconciled ||
+        reconciled.draftAsl !== input.lakeContent ||
+        reconciled.draftHtml !== bodyHtml
+      ) {
+        throw error;
+      }
+      return {
+        response: {},
+        bodyHtml,
+        reconciledAfterUnknownResponse: true,
+      };
+    }
   }
 
   async updateDocNativeDraft(
@@ -2101,7 +3330,7 @@ export class YuqueWebClient {
           url,
           response.headers.get("x-csrf-token") ?? undefined,
         );
-        return unwrapData(parsed);
+        return options.returnEnvelope ? parsed : unwrapData(parsed);
       } catch (error) {
         lastError = error;
         if (
@@ -2151,7 +3380,8 @@ export class YuqueWebClient {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         redirect: "manual",
         signal: controller.signal,
-      });
+        ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
+      } as RequestInit & { dispatcher?: Dispatcher });
       const getSetCookie = (
         response.headers as Headers & { getSetCookie?: () => string[] }
       ).getSetCookie;
@@ -2369,6 +3599,21 @@ function unwrapData(value: unknown): unknown {
   return value;
 }
 
+function objectDeletionFingerprint(input: {
+  resourceType: "Doc" | "Sheet";
+  bookId: number;
+  nodeUuid: string;
+  docId: string;
+  title: string;
+  version: number;
+  contentFingerprint: string;
+}): string {
+  return fingerprint({
+    operation: "delete_object",
+    ...input,
+  });
+}
+
 function normalizeBook(
   value: unknown,
   host: string,
@@ -2569,6 +3814,70 @@ function normalizeCatalog(
   });
 }
 
+function normalizeCatalogTitle(value: string | undefined): string {
+  const title = value?.trim() || "";
+  if (!title) throw new Error("Directory title is required");
+  if (title.length > 100) {
+    throw new Error("Directory title must not exceed 100 characters");
+  }
+  if (/\p{Cc}/u.test(title)) {
+    throw new Error("Directory title contains a control character");
+  }
+  return title;
+}
+
+function assertUniqueCatalogTitle(
+  nodes: CatalogNode[],
+  parentUuid: string | undefined,
+  title: string,
+  excludedUuid?: string,
+): void {
+  const duplicate = nodes.find(
+    (node) =>
+      node.uuid !== excludedUuid &&
+      (node.parentUuid ?? "") === (parentUuid ?? "") &&
+      node.title === title,
+  );
+  if (duplicate) {
+    throw new ContractError(
+      `A catalog object with the same title already exists at ${duplicate.displayPath}`,
+    );
+  }
+}
+
+function catalogNodeIsDescendant(
+  nodes: CatalogNode[],
+  candidate: CatalogNode,
+  ancestorUuid: string,
+): boolean {
+  const byUuid = new Map(nodes.map((node) => [node.uuid, node]));
+  let parentUuid = candidate.parentUuid;
+  const visited = new Set<string>();
+  while (parentUuid) {
+    if (parentUuid === ancestorUuid) return true;
+    if (visited.has(parentUuid)) {
+      throw new ContractError("Yuque catalog has a cycle");
+    }
+    visited.add(parentUuid);
+    parentUuid = byUuid.get(parentUuid)?.parentUuid;
+  }
+  return false;
+}
+
+function catalogFingerprint(nodes: CatalogNode[]): string {
+  return fingerprint(
+    nodes.map((node) => ({
+      uuid: node.uuid,
+      type: node.type,
+      title: node.title,
+      parentUuid: node.parentUuid ?? null,
+      order: node.order,
+      docId: node.docId ?? null,
+      docSlug: node.docSlug ?? null,
+    })),
+  );
+}
+
 function catalogPath(
   record: Record<string, unknown>,
   byUuid: Map<string, Record<string, unknown>>,
@@ -2643,6 +3952,201 @@ function assertScopeId(value: string): void {
 function optionalRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function docVersionDocument(
+  doc: NormalizedDoc,
+  targetUrl: string,
+): DocVersionListResult["doc"] {
+  return {
+    id: doc.id,
+    title: doc.title,
+    url: targetUrl,
+    bookUrl: doc.bookUrl,
+    location: doc.location,
+  };
+}
+
+function normalizeDocVersionSummary(
+  value: unknown,
+  expectedDocId: string,
+  baseHost: string,
+): NormalizedDocVersionSummary {
+  const record = asRecord(value, "Document version");
+  const id = String(requireNumber(record, "id"));
+  const docId = String(requireNumber(record, "doc_id"));
+  if (docId !== expectedDocId) {
+    throw new ContractError("Yuque document version belongs to another Doc");
+  }
+  const user = asRecord(record.user, "Document version author");
+  const name = optionalStringValue(record.name);
+  const authorName = optionalStringValue(user.name);
+  const released = record.isReleased;
+  if (typeof released !== "boolean") {
+    throw new ContractError(
+      "Yuque document version is missing boolean 'isReleased'",
+    );
+  }
+  return {
+    id,
+    docId,
+    title: requireStringValue(record, "title"),
+    ...(name ? { name } : {}),
+    createdAt: requireStringValue(record, "created_at"),
+    draft: requireBooleanValue(record, "draft"),
+    released,
+    publicationStatus: requireNumber(record, "publication_status"),
+    authorLogin: requireStringValue(user, "login"),
+    ...(authorName ? { authorName } : {}),
+    ...(name
+      ? {
+          versionUrl: new URL(
+            `/r/doc_versions/${encodeURIComponent(id)}`,
+            baseHost,
+          ).href,
+        }
+      : {}),
+  };
+}
+
+function normalizeDocVersionDetail(
+  value: unknown,
+  expectedDocId: string,
+  baseHost: string,
+): NormalizedDocVersionDetail {
+  const record = asRecord(value, "Document version detail");
+  const id = String(requireNumber(record, "id"));
+  const docId = String(requireNumber(record, "doc_id"));
+  if (docId !== expectedDocId) {
+    throw new ContractError(
+      "Yuque document version detail belongs to another Doc",
+    );
+  }
+  const user = asRecord(record.user, "Document version detail author");
+  const content = requireStringValue(record, "content");
+  const contentHtml = requireStringValue(record, "content_html");
+  const name = optionalStringValue(record.name);
+  const authorName = optionalStringValue(user.name);
+  const released = record.isReleased;
+  const publicationStatus = optionalNumber(record.publication_status);
+  const normalized: NormalizedDocVersionDetail = {
+    id,
+    docId,
+    title: requireStringValue(record, "title"),
+    ...(name ? { name } : {}),
+    createdAt: requireStringValue(record, "created_at"),
+    draft: requireBooleanValue(record, "draft"),
+    ...(typeof released === "boolean" ? { released } : {}),
+    ...(publicationStatus !== undefined ? { publicationStatus } : {}),
+    authorLogin: requireStringValue(user, "login"),
+    ...(authorName ? { authorName } : {}),
+    ...(name
+      ? {
+          versionUrl: new URL(
+            `/r/doc_versions/${encodeURIComponent(id)}`,
+            baseHost,
+          ).href,
+        }
+      : {}),
+    docType: requireStringValue(record, "doc_type"),
+    format: requireStringValue(record, "format"),
+    slug: requireStringValue(record, "slug"),
+    content,
+    contentHtml,
+    plainText: lakeText(content).trim(),
+    fingerprint: "",
+  };
+  normalized.fingerprint = fingerprint({
+    id,
+    docId,
+    title: normalized.title,
+    format: normalized.format,
+    content,
+    createdAt: normalized.createdAt,
+  });
+  return normalized;
+}
+
+function normalizeCommentTree(values: unknown[]): NormalizedComment[] {
+  const comments: NormalizedComment[] = [];
+  const visit = (value: unknown): void => {
+    const record = asRecord(value, "Comment");
+    const id = String(requireNumber(record, "id"));
+    const user = asRecord(record.user, "Comment author");
+    const bodyAsl = requireStringValue(record, "body_asl");
+    const format = requireStringValue(record, "format");
+    if (format !== "lake") {
+      throw new ContractError("Only Lake comment content is verified");
+    }
+    const authorLogin = requireStringValue(user, "login");
+    const authorName = optionalStringValue(user.name);
+    const createdAt = requireStringValue(record, "created_at");
+    const updatedAt = requireStringValue(record, "updated_at");
+    const parentId = optionalNumber(record.parent_id);
+    const rootId = optionalNumber(record.root_id);
+    const normalized: NormalizedComment = {
+      id,
+      ...(parentId !== undefined ? { parentId: String(parentId) } : {}),
+      ...(rootId !== undefined ? { rootId: String(rootId) } : {}),
+      authorLogin,
+      ...(authorName ? { authorName } : {}),
+      body: lakeText(bodyAsl).trim(),
+      bodyAsl,
+      format: "lake",
+      createdAt,
+      updatedAt,
+      fingerprint: "",
+    };
+    normalized.fingerprint = fingerprint({
+      id,
+      parentId: normalized.parentId ?? null,
+      rootId: normalized.rootId ?? null,
+      authorLogin,
+      bodyAsl,
+      updatedAt,
+    });
+    comments.push(normalized);
+    const children = record.sub_comments;
+    if (children !== undefined) {
+      if (!Array.isArray(children)) {
+        throw new ContractError("Comment replies are not an array");
+      }
+      children.forEach(visit);
+    }
+  };
+  values.forEach(visit);
+  return comments;
+}
+
+function commentCollectionFingerprint(comments: NormalizedComment[]): string {
+  return fingerprint(
+    comments
+      .map((comment) => ({ id: comment.id, fingerprint: comment.fingerprint }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  );
+}
+
+function normalizeCommentBody(value: string | undefined): string {
+  const body = value?.trim();
+  if (!body) throw new Error("Comment body is required");
+  if (body.length > 20_000) {
+    throw new Error("Comment body must not exceed 20,000 characters");
+  }
+  return body;
+}
+
+function normalizePositiveId(value: string | undefined, field: string): string {
+  const normalized = value?.trim();
+  if (!normalized || !/^[1-9][0-9]*$/.test(normalized)) {
+    throw new Error(`${field} must be a positive numeric ID`);
+  }
+  return normalized;
+}
+
+function optionalNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
     : undefined;
 }
 
@@ -2765,6 +4269,17 @@ function requireNumber(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   if (typeof value !== "number" || !Number.isFinite(value))
     throw new ContractError(`Yuque response is missing number '${key}'`);
+  return value;
+}
+
+function requireBooleanValue(
+  record: Record<string, unknown>,
+  key: string,
+): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") {
+    throw new ContractError(`Yuque response is missing boolean '${key}'`);
+  }
   return value;
 }
 

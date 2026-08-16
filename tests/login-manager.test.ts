@@ -1,12 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  CHROMIUM_LAUNCH_ARGS,
+  CHROMIUM_SANDBOX_ENABLED,
   LOGIN_PROVIDERS,
   LoginManager,
+  chromiumLaunchOptions,
   parseLoginProvider,
   renderLoginPage,
 } from "../src/login-manager.js";
 
 describe("QR login provider boundary", () => {
+  it("keeps the Chromium process sandbox enabled", () => {
+    expect(CHROMIUM_SANDBOX_ENABLED).toBe(true);
+    expect(CHROMIUM_LAUNCH_ARGS).not.toContain("--no-sandbox");
+    expect(CHROMIUM_LAUNCH_ARGS).not.toContain("--disable-setuid-sandbox");
+    expect(
+      chromiumLaunchOptions({
+        chromiumExecutable: "/usr/bin/chromium",
+      } as never),
+    ).toMatchObject({
+      executablePath: "/usr/bin/chromium",
+      chromiumSandbox: true,
+    });
+  });
+
   it("accepts only the three verified official QR providers", () => {
     expect(LOGIN_PROVIDERS).toEqual(["dingtalk", "wechat", "alipay"]);
     expect(parseLoginProvider("dingtalk")).toBe("dingtalk");

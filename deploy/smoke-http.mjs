@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 const fileEnvironment = process.env.MCP_ENV_FILE
   ? parseEnvironment(await readFile(process.env.MCP_ENV_FILE, "utf8"))
   : {};
+const packageVersion = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+).version;
 const publicBaseUrl =
   process.env.PUBLIC_BASE_URL || fileEnvironment.PUBLIC_BASE_URL;
 const baseUrl =
@@ -27,7 +30,7 @@ const initialize = await fetch(baseUrl, {
     params: {
       protocolVersion: "2025-03-26",
       capabilities: {},
-      clientInfo: { name: "yuque-web-mcp-smoke", version: "1.0.0" },
+      clientInfo: { name: "yuque-web-mcp-smoke", version: packageVersion },
     },
   }),
 });
@@ -57,8 +60,8 @@ const list = await fetch(baseUrl, {
 if (!list.ok) throw new Error(`tools/list failed: ${list.status}`);
 const payload = await mcpPayload(list);
 const count = payload.result?.tools?.length;
-if (count !== 30)
-  throw new Error(`expected 30 tools, received ${String(count)}`);
+if (count !== 36)
+  throw new Error(`expected 36 tools, received ${String(count)}`);
 const allDocs = payload.result?.tools?.find(
   (tool) => tool.name === "yuque_list_all_docs",
 );
@@ -84,7 +87,7 @@ const capabilityPayload = await mcpPayload(capabilityResponse);
 const capabilityText = capabilityPayload.result?.content?.[0]?.text;
 const capabilityReport = JSON.parse(capabilityText || "null");
 if (
-  capabilityReport?.server_version !== "0.3.2" ||
+  capabilityReport?.server_version !== packageVersion ||
   !["strict", "best_effort"].includes(capabilityReport?.write_consistency_mode)
 ) {
   throw new Error("Capability Registry response is missing or incompatible");

@@ -30,6 +30,7 @@ export type CapabilityName =
   | "set_active_scope"
   | "search"
   | "get_toc"
+  | "change_catalog"
   | "list_docs"
   | "get_doc"
   | "get_doc_editor"
@@ -37,6 +38,13 @@ export type CapabilityName =
   | "acquire_doc_lock"
   | "release_doc_lock"
   | "get_doc_text"
+  | "list_comments"
+  | "create_comment"
+  | "update_comment"
+  | "delete_comment"
+  | "list_doc_versions"
+  | "get_doc_version"
+  | "restore_doc_version"
   | "get_sheet"
   | "convert_markdown"
   | "create_doc"
@@ -76,11 +84,19 @@ export interface EndpointContract {
     | "permission"
     | "doc_object"
     | "sheet_object"
+    | "catalog_node"
     | "knowledge_base";
-  targetResourceType?: "Doc" | "Sheet" | "KnowledgeBase" | "Collaboration";
+  targetResourceType?:
+    | "Doc"
+    | "Sheet"
+    | "CatalogNode"
+    | "KnowledgeBase"
+    | "Collaboration"
+    | "Comment";
   idempotent: boolean;
   requiredResponsePaths: string[];
   liveWriteEnabled?: boolean;
+  liveWriteHostTypes?: Array<"organization" | "personal">;
   verifiedScenarios?: EndpointVerificationScenario[];
   notes?: string;
 }
@@ -127,9 +143,13 @@ export type PendingChangeKind =
   | "update_sheet"
   | "update_sheet_chart"
   | "restore_snapshot"
+  | "restore_doc_version"
+  | "restore_sheet_snapshot"
   | "create_book"
   | "update_book"
   | "change_book_collaborator"
+  | "change_catalog"
+  | "change_comment"
   | "delete_doc"
   | "delete_sheet"
   | "delete_book";
@@ -166,6 +186,8 @@ export interface PendingChangePayload {
   newTitle?: string;
   baseVersion?: number;
   snapshotId?: string;
+  versionId?: string;
+  sheetDraft?: string;
   sheetOperations?: unknown[];
   sheetChartOperations?: unknown[];
   baseWorkbookFingerprint?: string;
@@ -178,7 +200,25 @@ export interface PendingChangePayload {
   collaboratorLogin?: string;
   collaboratorRole?: "reader" | "editor";
   collaboratorAction?: "invite" | "change_role" | "remove";
-  resourceType?: "Doc" | "Sheet" | "KnowledgeBase";
+  catalogAction?: "create" | "rename" | "move" | "delete";
+  catalogNodeUuid?: string;
+  catalogTargetUuid?: string;
+  catalogPosition?: "into" | "after";
+  catalogTitle?: string;
+  catalogExpectedParentPath?: string;
+  commentAction?: "create" | "update" | "delete";
+  commentId?: string;
+  commentText?: string;
+  commentBodyAsl?: string;
+  commentBodyHtml?: string;
+  resourceType?:
+    | "Doc"
+    | "Sheet"
+    | "CatalogNode"
+    | "CatalogDirectory"
+    | "CatalogDocument"
+    | "KnowledgeBase"
+    | "Comment";
   confirmationText?: string;
   allowNonempty?: boolean;
 }

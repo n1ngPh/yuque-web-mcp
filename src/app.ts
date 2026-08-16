@@ -21,6 +21,18 @@ export async function createApplication(config: AppConfig) {
   const login = new LoginManager(config, sessions);
   const changes = new ChangeStore(config, db, crypto, client);
 
+  const readiness = () => {
+    const database = db.readiness();
+    return {
+      ready:
+        database.quickCheck &&
+        database.executingChanges === 0 &&
+        contracts.manifest.endpoints.length > 0,
+      database,
+      contractVersion: contracts.manifest.version,
+    };
+  };
+
   return {
     config,
     db,
@@ -31,6 +43,7 @@ export async function createApplication(config: AppConfig) {
     client,
     login,
     changes,
+    readiness,
   };
 }
 

@@ -8,7 +8,7 @@ import {
 } from "../src/mcp.js";
 
 describe("MCP public surface", () => {
-  it("exposes exactly the 30 v0.3.2 tools with capability discovery", async () => {
+  it("exposes exactly the 36 v1 tools with capability discovery", async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const server = createMcpServer("employee.a", {} as never);
@@ -27,7 +27,7 @@ describe("MCP public surface", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual(
       toolDefinitions.map((tool) => tool.name),
     );
-    expect(result.tools).toHaveLength(30);
+    expect(result.tools).toHaveLength(36);
     expect(result.tools.some((tool) => tool.name === "yuque_list_scopes")).toBe(
       true,
     );
@@ -39,6 +39,12 @@ describe("MCP public surface", () => {
         "yuque_preview_create_book",
         "yuque_preview_update_book",
         "yuque_preview_change_book_collaborator",
+        "yuque_preview_change_catalog",
+        "yuque_list_comments",
+        "yuque_preview_change_comment",
+        "yuque_list_doc_versions",
+        "yuque_get_doc_version",
+        "yuque_preview_restore_doc_version",
         "yuque_preview_delete_doc",
         "yuque_preview_delete_sheet",
         "yuque_preview_delete_book",
@@ -80,6 +86,14 @@ describe("MCP public surface", () => {
       result.tools.find((tool) => tool.name === "yuque_preview_update_sheet")
         ?.description,
     ).toContain("rename_worksheet");
+    expect(
+      result.tools.find((tool) => tool.name === "yuque_preview_change_catalog")
+        ?.description,
+    ).toContain("删除仅允许空分组");
+    expect(
+      result.tools.find((tool) => tool.name === "yuque_preview_change_comment")
+        ?.description,
+    ).toContain("当前员工自己的评论");
     await client.close();
     await server.close();
   });
@@ -551,6 +565,202 @@ describe("MCP public surface", () => {
     expect(first.text.indexOf('"display_path"')).toBeLessThan(
       first.text.indexOf('"cells"'),
     );
+
+    await client.close();
+    await server.close();
+  });
+
+  it("returns verified Doc versions and routes restore through the guarded write path", async () => {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const document = {
+      id: "77",
+      title: "version doc",
+      url: "https://www.yuque.com/alice/book/version-doc",
+      bookUrl: "https://www.yuque.com/alice/book",
+      location: {
+        path: ["version doc"],
+        fullPath: ["个人：Alice", "Book", "version doc"],
+        displayPath: "个人：Alice / Book / version doc",
+        level: 0,
+        order: 0,
+      },
+    };
+    const version = {
+      id: "901",
+      docId: "77",
+      title: "version doc",
+      createdAt: "2026-08-16T00:00:00.000Z",
+      draft: false,
+      released: true,
+      publicationStatus: 1,
+      authorLogin: "alice",
+      versionUrl: undefined,
+    };
+    const server = createMcpServer("employee.a", {
+      client: {
+        listDocVersions: async () => ({
+          doc: document,
+          versions: [version],
+          offset: 0,
+          limit: 200,
+          hasMore: false,
+        }),
+        getDocVersion: async () => ({
+          doc: document,
+          version: {
+            ...version,
+            docType: "Doc",
+            format: "lake",
+            slug: "version-doc",
+            content: "<p>historical body</p>",
+            contentHtml: "<p>historical body</p>",
+            plainText: "historical body",
+            fingerprint: "version-fingerprint",
+          },
+        }),
+      },
+      changes: {
+        previewRestoreDocVersion: async (
+          _ownerId: string,
+          input: { docUrl: string; versionId: string },
+        ) => ({
+          change_token: "version-restore-token",
+          diff_digest: "version-restore-digest",
+          target_url: input.docUrl,
+          display_path: document.location.displayPath,
+          source_version_id: input.versionId,
+        }),
+      },
+    } as never);
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const listed = await client.callTool({
+      name: "yuque_list_doc_versions",
+      arguments: { doc_url: document.url },
+    });
+    const listedText = (
+      listed as { content: Array<{ type: string; text?: string }> }
+    ).content[0]?.text;
+    expect(listedText).toContain('"display_path"');
+    expect(listedText).toContain('"version_id": "901"');
+    expect(listedText).toContain('"version_url": null');
+
+    const detail = await client.callTool({
+      name: "yuque_get_doc_version",
+      arguments: { doc_url: document.url, version_id: "901" },
+    });
+    const detailText = (
+      detail as { content: Array<{ type: string; text?: string }> }
+    ).content[0]?.text;
+    expect(detailText).toBeTruthy();
+    expect(detailText!.indexOf('"display_path"')).toBeLessThan(
+      detailText!.indexOf('"body"'),
+    );
+    expect(detailText).toContain("historical body");
+
+    const restore = await client.callTool({
+      name: "yuque_preview_restore_doc_version",
+      arguments: { doc_url: document.url, version_id: "901" },
+    });
+    expect(restore.isError).not.toBe(true);
+    const restoreText = (
+      restore as { content: Array<{ type: string; text?: string }> }
+    ).content[0]?.text;
+    expect(restoreText).toContain("version-restore-token");
+    expect(restoreText).toContain('"source_version_id": "901"');
+
+    await client.close();
+    await server.close();
+  });
+
+  it("routes typed Doc and Sheet deletion previews through the shared safe state machine", async () => {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const calls: Array<{
+      resourceType: "Doc" | "Sheet" | "KnowledgeBase";
+      targetUrl: string;
+      allowNonempty?: boolean;
+    }> = [];
+    const preview = (resourceType: "Doc" | "Sheet", docUrl: string) => ({
+      change_token: `${resourceType.toLowerCase()}-token`,
+      expires_at: "2026-08-16T00:10:00.000Z",
+      target_url: docUrl,
+      display_path: `个人：Alice / Book / ${resourceType}`,
+      diff: `-${resourceType}`,
+      diff_digest: `${resourceType.toLowerCase()}-digest`,
+      stats: {
+        added_lines: 0,
+        removed_lines: 1,
+        has_deletions: true,
+      },
+      requires_deletion_confirmation: true,
+      warnings: ["trashed"],
+    });
+    const server = createMcpServer("employee.a", {
+      changes: {
+        previewDeleteDoc: async (
+          _ownerId: string,
+          input: { docUrl: string },
+        ) => {
+          calls.push({ resourceType: "Doc", targetUrl: input.docUrl });
+          return preview("Doc", input.docUrl);
+        },
+        previewDeleteSheet: async (
+          _ownerId: string,
+          input: { docUrl: string },
+        ) => {
+          calls.push({ resourceType: "Sheet", targetUrl: input.docUrl });
+          return preview("Sheet", input.docUrl);
+        },
+        previewDeleteBook: async (
+          _ownerId: string,
+          input: { bookUrl: string; allowNonempty: boolean },
+        ) => {
+          calls.push({
+            resourceType: "KnowledgeBase",
+            targetUrl: input.bookUrl,
+            allowNonempty: input.allowNonempty,
+          });
+          return preview("Doc", input.bookUrl);
+        },
+      },
+    } as never);
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const docUrl = "https://www.yuque.com/alice/book/doc";
+    const sheetUrl = "https://www.yuque.com/alice/book/sheet";
+    const doc = await client.callTool({
+      name: "yuque_preview_delete_doc",
+      arguments: { doc_url: docUrl },
+    });
+    const sheet = await client.callTool({
+      name: "yuque_preview_delete_sheet",
+      arguments: { doc_url: sheetUrl },
+    });
+    const bookUrl = "https://www.yuque.com/alice/book";
+    const book = await client.callTool({
+      name: "yuque_preview_delete_book",
+      arguments: { book_url: bookUrl, allow_nonempty: true },
+    });
+    expect(doc.isError).not.toBe(true);
+    expect(sheet.isError).not.toBe(true);
+    expect(book.isError).not.toBe(true);
+    expect(JSON.stringify(doc)).toContain("doc-token");
+    expect(JSON.stringify(sheet)).toContain("sheet-token");
+    expect(calls).toEqual([
+      { resourceType: "Doc", targetUrl: docUrl },
+      { resourceType: "Sheet", targetUrl: sheetUrl },
+      {
+        resourceType: "KnowledgeBase",
+        targetUrl: bookUrl,
+        allowNonempty: true,
+      },
+    ]);
 
     await client.close();
     await server.close();

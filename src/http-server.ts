@@ -9,13 +9,20 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Application } from "./app.js";
 import { createMcpServer } from "./mcp.js";
 import { parseLoginProvider } from "./login-manager.js";
+import { logger } from "./logger.js";
+import { ServiceMetrics } from "./metrics.js";
 
 interface ActiveSession {
   transport: StreamableHTTPServerTransport;
+  lastUsedAt: number;
+  inFlight: number;
 }
 
 export function startHttpServer(app: Application) {
   const sessions = new Map<string, ActiveSession>();
+  const metrics = new ServiceMetrics();
+  let draining = false;
+  let shutdownPromise: Promise<{ writesDrained: boolean }> | undefined;
   const allowedHosts = new Set([
     ...app.config.allowedHosts,
     `127.0.0.1:${app.config.port}`,
@@ -25,13 +32,41 @@ export function startHttpServer(app: Application) {
   const allowedOrigins = new Set(app.config.allowedOrigins);
 
   const server = createServer((request, response) => {
-    handleRequest(request, response).catch(() => {
-      console.error("Request handling failed");
+    const requestId = safeRequestId(request) ?? randomUUID();
+    const startedAt = Date.now();
+    response.setHeader("X-Request-Id", requestId);
+    metrics.requestsTotal += 1;
+    metrics.activeRequests += 1;
+    response.once("finish", () => {
+      metrics.activeRequests -= 1;
+      if (response.statusCode >= 500) metrics.requestErrorsTotal += 1;
+      logger.log(
+        response.statusCode >= 500 ? "error" : "info",
+        "http_request",
+        {
+          request_id: requestId,
+          method: request.method ?? "UNKNOWN",
+          path: safeLogPath(requestPath(request)),
+          status: response.statusCode,
+          duration_ms: Date.now() - startedAt,
+        },
+      );
+    });
+    handleRequest(request, response).catch((error: unknown) => {
+      logger.log("error", "request_failed", {
+        request_id: requestId,
+        error_class: error instanceof Error ? error.name : "UnknownError",
+      });
       if (!response.headersSent)
         sendJson(response, 500, { error: "Internal Server Error" });
       else response.end();
     });
   });
+
+  const cleanupTimer = setInterval(() => {
+    void expireIdleSessions();
+  }, 60_000);
+  cleanupTimer.unref();
 
   async function handleRequest(
     request: IncomingMessage,
@@ -46,6 +81,47 @@ export function startHttpServer(app: Application) {
       return sendJson(response, 200, { status: "ok" });
     }
 
+    if (path === "/readyz") {
+      if (request.method !== "GET")
+        return sendJson(response, 405, { error: "Method Not Allowed" });
+      const readiness = app.readiness();
+      return sendJson(response, !draining && readiness.ready ? 200 : 503, {
+        status: !draining && readiness.ready ? "ready" : "not_ready",
+      });
+    }
+
+    if (path === "/metrics") {
+      if (request.method !== "GET")
+        return sendJson(response, 405, { error: "Method Not Allowed" });
+      if (app.config.metricsEnabled === false)
+        return sendJson(response, 404, { error: "Not Found" });
+      const owner = authenticateRequest(request, app);
+      if (!owner) {
+        metrics.authenticationFailuresTotal += 1;
+        return sendUnauthorized(response);
+      }
+      const readiness = app.readiness();
+      return sendMetrics(
+        response,
+        metrics.render({
+          activeSessions: sessions.size,
+          activeLogins: app.login.activeCount(),
+          activeWrites: app.changes.activeWriteCount(),
+          ready: !draining && readiness.ready,
+        }),
+      );
+    }
+
+    if (draining) {
+      return sendJson(response, 503, { error: "Service is shutting down" });
+    }
+
+    if (metrics.activeRequests > (app.config.maxConcurrentRequests ?? 16)) {
+      metrics.rateLimitedTotal += 1;
+      response.setHeader("Retry-After", "1");
+      return sendJson(response, 503, { error: "Too many concurrent requests" });
+    }
+
     if (path.startsWith("/login/")) {
       return handleLoginRoute(path, request, response, app);
     }
@@ -55,13 +131,8 @@ export function startHttpServer(app: Application) {
 
     const owner = authenticateRequest(request, app);
     if (!owner) {
-      response.writeHead(401, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-        "WWW-Authenticate": 'Bearer realm="yuque-web-mcp"',
-      });
-      response.end(JSON.stringify({ error: "Unauthorized" }));
-      return;
+      metrics.authenticationFailuresTotal += 1;
+      return sendUnauthorized(response);
     }
 
     const sessionId = firstHeader(request.headers["mcp-session-id"]);
@@ -69,8 +140,25 @@ export function startHttpServer(app: Application) {
       const active = sessions.get(sessionId);
       if (!active)
         return sendMcpError(response, 404, -32001, "Session not found");
-      await active.transport.handleRequest(request, response);
-      return;
+      if (active.inFlight >= (app.config.maxRequestsPerSession ?? 4)) {
+        metrics.rateLimitedTotal += 1;
+        response.setHeader("Retry-After", "1");
+        return sendMcpError(
+          response,
+          429,
+          -32002,
+          "Too many concurrent requests for this session",
+        );
+      }
+      active.inFlight += 1;
+      active.lastUsedAt = Date.now();
+      try {
+        await active.transport.handleRequest(request, response);
+        return;
+      } finally {
+        active.inFlight -= 1;
+        active.lastUsedAt = Date.now();
+      }
     }
 
     if (request.method !== "POST") {
@@ -81,7 +169,26 @@ export function startHttpServer(app: Application) {
         "Mcp-Session-Id header is required",
       );
     }
-    const body = await readJsonBody(request, 1536 * 1024);
+    if (sessions.size >= (app.config.maxMcpSessions ?? 32)) {
+      await expireIdleSessions();
+      if (sessions.size >= (app.config.maxMcpSessions ?? 32)) {
+        metrics.rateLimitedTotal += 1;
+        response.setHeader("Retry-After", "5");
+        return sendMcpError(response, 503, -32003, "MCP session limit reached");
+      }
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(
+        request,
+        app.config.maxRequestBodyBytes ?? 1536 * 1024,
+      );
+    } catch (error) {
+      if (error instanceof RequestBodyError) {
+        return sendMcpError(response, error.status, -32700, error.message);
+      }
+      throw error;
+    }
     if (!isInitializeRequest(body)) {
       return sendMcpError(
         response,
@@ -94,7 +201,7 @@ export function startHttpServer(app: Application) {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
-        sessions.set(id, { transport });
+        sessions.set(id, { transport, lastUsedAt: Date.now(), inFlight: 0 });
       },
     });
     transport.onclose = () => {
@@ -106,12 +213,68 @@ export function startHttpServer(app: Application) {
   }
 
   server.listen(app.config.port, app.config.host, () => {
-    console.log(
-      `yuque-web-mcp listening on ${app.config.host}:${app.config.port}`,
-    );
+    logger.log("info", "server_listening", {
+      host: app.config.host,
+      port: app.config.port,
+      write_mode: app.config.writeConsistencyMode,
+      write_kill_switch: app.config.writeKillSwitch === true,
+    });
   });
 
-  return { server, sessions };
+  async function expireIdleSessions(): Promise<void> {
+    const cutoff =
+      Date.now() - (app.config.mcpSessionIdleSeconds ?? 1_800) * 1_000;
+    const expired = [...sessions.entries()].filter(
+      ([, active]) => active.inFlight === 0 && active.lastUsedAt <= cutoff,
+    );
+    await Promise.all(
+      expired.map(async ([id, active]) => {
+        sessions.delete(id);
+        await active.transport.close().catch(() => undefined);
+      }),
+    );
+  }
+
+  function shutdown(): Promise<{ writesDrained: boolean }> {
+    shutdownPromise ??= (async () => {
+      draining = true;
+      clearInterval(cleanupTimer);
+      app.changes.beginShutdown();
+      const timeoutMs = (app.config.gracefulShutdownSeconds ?? 30) * 1_000;
+      const serverClosed = new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      await app.login.shutdown();
+      const writesDrained = await app.changes.waitForIdle(timeoutMs);
+      await Promise.all(
+        [...sessions.values()].map((active) =>
+          active.transport.close().catch(() => undefined),
+        ),
+      );
+      sessions.clear();
+      server.closeIdleConnections();
+      if (!writesDrained) server.closeAllConnections();
+      let closeTimeout: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          serverClosed,
+          new Promise<void>((resolve) => {
+            closeTimeout = setTimeout(resolve, timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (closeTimeout) clearTimeout(closeTimeout);
+      }
+      await app.client.close();
+      logger.log(writesDrained ? "info" : "error", "server_shutdown", {
+        writes_drained: writesDrained,
+      });
+      return { writesDrained };
+    })();
+    return shutdownPromise;
+  }
+
+  return { server, sessions, metrics, shutdown };
 }
 
 function authenticateRequest(request: IncomingMessage, app: Application) {
@@ -310,11 +473,26 @@ async function readJsonBody(
   for await (const chunk of request) {
     const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     size += buffer.length;
-    if (size > maxBytes) throw new Error("Request body exceeds limit");
+    if (size > maxBytes)
+      throw new RequestBodyError(413, "Request body exceeds limit");
     chunks.push(buffer);
   }
   const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? (JSON.parse(raw) as unknown) : undefined;
+  try {
+    return raw ? (JSON.parse(raw) as unknown) : undefined;
+  } catch {
+    throw new RequestBodyError(400, "Invalid JSON request body");
+  }
+}
+
+class RequestBodyError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RequestBodyError";
+  }
 }
 
 function sendJson(
@@ -327,6 +505,36 @@ function sendJson(
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(body));
+}
+
+function sendUnauthorized(response: ServerResponse): void {
+  response.writeHead(401, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "WWW-Authenticate": 'Bearer realm="yuque-web-mcp"',
+  });
+  response.end(JSON.stringify({ error: "Unauthorized" }));
+}
+
+function sendMetrics(response: ServerResponse, body: string): void {
+  response.writeHead(200, {
+    "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(body);
+}
+
+function safeRequestId(request: IncomingMessage): string | undefined {
+  const candidate = firstHeader(request.headers["x-request-id"]);
+  return candidate && /^[A-Za-z0-9._-]{8,128}$/.test(candidate)
+    ? candidate
+    : undefined;
+}
+
+function safeLogPath(path: string): string {
+  if (!path.startsWith("/login/")) return path;
+  const parts = path.split("/").filter(Boolean);
+  return `/login/:code${parts[2] ? `/${parts[2]}` : ""}`;
 }
 
 function sendExpiredLoginPage(response: ServerResponse): void {

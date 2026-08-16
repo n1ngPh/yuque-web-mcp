@@ -14,6 +14,7 @@ coverage/
 *.webm
 research-output/
 runtime/
+instances/
 /docs/
 /src/research-capture.ts
 /deploy/personal-*.mjs

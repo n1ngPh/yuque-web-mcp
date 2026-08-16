@@ -57,7 +57,7 @@ describe("web endpoint contracts", () => {
     );
   });
 
-  it("keeps replay-verified personal Sheet writes closed while allowing reads", async () => {
+  it("enables verified best-effort content writes only on the personal Host", async () => {
     const registry = await ContractRegistry.load(
       resolve("contracts/yuque-web-2026-08-14.json"),
     );
@@ -87,7 +87,8 @@ describe("web endpoint contracts", () => {
     expect(save).toMatchObject({
       verified: true,
       verifiedHostTypes: expect.arrayContaining(["personal"]),
-      liveWriteEnabled: false,
+      liveWriteEnabled: true,
+      liveWriteHostTypes: ["personal"],
       deletionEffect: "content",
     });
     expect(registry.get("save_sheet_content", "personal")).toMatchObject({
@@ -99,14 +100,47 @@ describe("web endpoint contracts", () => {
       path: "/api/docs",
       liveWriteEnabled: true,
     });
-    expect(() =>
+    expect(
       registry.getWritable("save_sheet_content", "personal"),
-    ).toThrow("remains disabled");
+    ).toMatchObject({ liveWriteHostTypes: ["personal"] });
+    expect(registry.getWritable("save_doc_content", "personal")).toMatchObject({
+      liveWriteHostTypes: ["personal"],
+    });
+    expect(registry.getWritable("publish_doc", "personal")).toMatchObject({
+      liveWriteHostTypes: ["personal"],
+    });
+    expect(() =>
+      registry.getWritable("save_doc_content", "organization"),
+    ).toThrow("not enabled on the organization Host");
+    expect(() => registry.getWritable("publish_doc", "organization")).toThrow(
+      "not enabled on the organization Host",
+    );
     expect(registry.getWritable("create_book", "personal")).toMatchObject({
       method: "POST",
       path: "/api/books",
       idempotent: false,
       liveWriteEnabled: true,
+    });
+    expect(registry.getWritable("delete_doc", "personal")).toMatchObject({
+      method: "PUT",
+      path: "/api/catalog_nodes",
+      deletionEffect: "doc_object",
+      targetResourceType: "Doc",
+      idempotent: false,
+    });
+    expect(registry.getWritable("delete_sheet", "personal")).toMatchObject({
+      method: "PUT",
+      path: "/api/catalog_nodes",
+      deletionEffect: "sheet_object",
+      targetResourceType: "Sheet",
+      idempotent: false,
+    });
+    expect(registry.getWritable("delete_book", "personal")).toMatchObject({
+      method: "DELETE",
+      path: "/api/books/{bookId}",
+      deletionEffect: "knowledge_base",
+      targetResourceType: "KnowledgeBase",
+      idempotent: false,
     });
     expect(() => registry.get("create_book", "organization")).toThrow(
       "organization-host capture and replay verification",

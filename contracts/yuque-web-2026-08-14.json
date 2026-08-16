@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-16-personal-create-47",
+  "version": "2026-08-16-personal-best-effort-content-write-54",
   "verifiedAt": "2026-08-16T00:00:00.000Z",
   "sourceBundles": [
     {
@@ -13,6 +13,42 @@
     {
       "url": "https://gw.alipayobjects.com/os/chair-script/skylark/p__bookJoin__routers__App.b3d0fd53.async.js",
       "sha256": "b0afde0fb150f3783372dcf3cbf4297b5e9d3776bc04d8d709b9bb2b5b062624"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/457.64363e1b.async.js",
+      "sha256": "ede71de797b9308f24209f7403a7eb4bbe13fffcdefe7e270fba1ec5534c64cb"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/79095.3ebefcbf.async.js",
+      "sha256": "962ee5aed1554e12a75d6475cb494fc20706050a9c996c72efa3031296133372"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/c__ReaderComment.4ad202f1.async.js",
+      "sha256": "1130abaacf76d77aa77b2a91e0d3b6c34bb0d3cfa1e0d0c3c0575882a463fb6c"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/c__WordingCommentPanel.c275683d.async.js",
+      "sha256": "e3df34c15828d3db565b3ca07f79a02a45becda8555e04b342dfc8dfa8536170"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/c__CommentFloor.d5a0ea37.async.js",
+      "sha256": "0d6254e921505d2841d91653324c3f428b96125a7e75505ee5eaa5e3ee7f4d29"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/c__CommentFloorComp.3748eea2.async.js",
+      "sha256": "e1d0eedecb7a6e8cc35f8464178826a6769cde65b39d73c05edac8e4944b7837"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/12605.24dd3d06.async.js",
+      "sha256": "8f8f6911715f8e38de10fe49855148e2aa9f801799ff415dcd010e8cd4bd0078"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/80720.8c6ce634.async.js",
+      "sha256": "9407b018c13d3d5aca2fced6c18cf4cd29ddfa9ed815ba4bd486d1f69afa774c"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/c__DocHistory.ac47ca2b.async.js",
+      "sha256": "b810d487a93c064bf96a060250feb2417e225074b31134df2e6a764d454c9d1a"
     }
   ],
   "endpoints": [
@@ -316,6 +352,58 @@
       "requiredResponsePaths": ["data"]
     },
     {
+      "capability": "change_catalog",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "PUT",
+      "path": "/api/catalog_nodes",
+      "deletionEffect": "catalog_node",
+      "targetResourceType": "CatalogNode",
+      "idempotent": false,
+      "requiredResponsePaths": ["data", "meta.book_id", "meta.toc_updated_at"],
+      "liveWriteEnabled": true,
+      "verifiedScenarios": [
+        {
+          "id": "personal_catalog_crud_closed_browser_v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T03:05:00.000Z",
+          "writeAttempts": 9,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 0,
+          "deleteRequests": 2,
+          "fullResourceRestored": true,
+          "constraints": [
+            "private personal knowledge base owned by current account",
+            "TITLE nodes for create, rename and empty-group deletion",
+            "create, rename, moveAfter and prependChild verified",
+            "delete is restricted to an empty TITLE node",
+            "destroyWithChildren must return zero deletedDocIds"
+          ]
+        },
+        {
+          "id": "personal_doc_sheet_catalog_move_cycle_v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T22:15:00.000Z",
+          "writeAttempts": 9,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 2,
+          "deleteRequests": 0,
+          "fullResourceRestored": true,
+          "constraints": [
+            "private personal knowledge base owned by current account",
+            "Doc and Sheet catalog entries use the same DOC node transport",
+            "prependChild into a TITLE directory and moveAfter back to root verified",
+            "document id, slug and URL remain unchanged",
+            "closed-browser replay covers Doc and Sheet and restores both paths"
+          ]
+        }
+      ],
+      "notes": "UI capture and closed-browser replay verified root/nested directory creation, rename, sibling/root movement, nesting and empty-group deletion, plus reversible Doc/Sheet catalog-entry moves. Non-empty group deletion remains disabled."
+    },
+    {
       "capability": "list_docs",
       "verified": false,
       "method": "GET",
@@ -348,6 +436,106 @@
       "path": "/api/docs/{groupSlug}/{bookSlug}/{docSlug}/text",
       "idempotent": true,
       "requiredResponsePaths": ["data.title", "data.content"]
+    },
+    {
+      "capability": "list_doc_versions",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/doc_versions",
+      "idempotent": true,
+      "requiredResponsePaths": ["data"],
+      "notes": "Personal Doc history UI capture verified doc_id, doc_type, offset and limit query fields; the independent encrypted Cookie Jar replayed the list after Chromium closed with no organization or company-Host request."
+    },
+    {
+      "capability": "get_doc_version",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/doc_versions/{versionId}",
+      "idempotent": true,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.doc_id",
+        "data.doc_type",
+        "data.title",
+        "data.format",
+        "data.content",
+        "data.content_html"
+      ],
+      "notes": "Personal Doc history UI capture verified version ID path plus doc_id query; browser-closed replay normalized Lake content and matched the selected list item without starting Chromium."
+    },
+    {
+      "capability": "list_comments",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "GET",
+      "path": "/api/comments/floor",
+      "idempotent": true,
+      "requiredResponsePaths": ["data.comments", "data.meta"],
+      "notes": "Personal Doc comment list was captured in the web UI and replayed after Chromium closed; nested replies are returned from sub_comments and normalized without guessing unsupported comment types."
+    },
+    {
+      "capability": "create_comment",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "POST",
+      "path": "/api/comments",
+      "deletionEffect": "none",
+      "targetResourceType": "Comment",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "requiredResponsePaths": ["data.id", "data.body_asl", "data.format"],
+      "notes": "UI capture and two browser-closed one-shot replays verified Lake comment creation. The production path generates Lake ASL through the verified Markdown conversion and pinned HTML renderer, then reads the exact new ID back before success."
+    },
+    {
+      "capability": "update_comment",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "PUT",
+      "path": "/api/comments/{commentId}",
+      "deletionEffect": "content",
+      "targetResourceType": "Comment",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "requiredResponsePaths": ["data.id", "data.body_asl", "data.format"],
+      "notes": "Personal UI capture and browser-closed replay verified own-comment Lake updates; Preview fingerprints the complete visible comment collection and Confirm performs exact-ID read-back."
+    },
+    {
+      "capability": "delete_comment",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "method": "DELETE",
+      "path": "/api/comments/{commentId}",
+      "deletionEffect": "content",
+      "targetResourceType": "Comment",
+      "idempotent": false,
+      "liveWriteEnabled": true,
+      "requiredResponsePaths": ["data.id", "data.deleted_at"],
+      "verifiedScenarios": [
+        {
+          "id": "personal-own-comment-delete-v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 1,
+          "retryAttempts": 0,
+          "browserStarts": 0,
+          "deleteRequests": 1,
+          "exactMatchOnly": true,
+          "constraints": [
+            "current employee's own comment only",
+            "Preview and explicit deletion confirmation required",
+            "one DELETE request followed by list read-back"
+          ]
+        }
+      ],
+      "notes": "DELETE is classified as comment-content deletion, not Doc object deletion. The comment must disappear from the verified floor list after one request."
     },
     {
       "capability": "get_doc_editor",
@@ -484,7 +672,8 @@
       "verified": true,
       "observedHostTypes": ["organization", "personal"],
       "verifiedHostTypes": ["organization", "personal"],
-      "liveWriteEnabled": false,
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["personal"],
       "method": "PUT",
       "path": "/api/docs/{docId}/content",
       "deletionEffect": "content",
@@ -495,7 +684,8 @@
       "capability": "publish_doc",
       "verified": true,
       "verifiedHostTypes": ["organization", "personal"],
-      "liveWriteEnabled": false,
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["personal"],
       "method": "PUT",
       "path": "/api/docs/{docId}/publish",
       "idempotent": false,
@@ -531,6 +721,126 @@
       "notes": "Personal UI evidence, browser-closed one-shot replay and full MCP strict/best_effort acceptance verified root Sheet creation. The create contract only creates and mounts the empty Sheet; first-worksheet initialization is isolated behind initialize_sheet."
     },
     {
+      "capability": "delete_doc",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "liveWriteEnabled": true,
+      "method": "PUT",
+      "path": "/api/catalog_nodes",
+      "deletionEffect": "doc_object",
+      "targetResourceType": "Doc",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data",
+        "meta.book_id",
+        "meta.node_uuid",
+        "meta.toc_updated_at",
+        "meta.deletedDocIds"
+      ],
+      "verifiedScenarios": [
+        {
+          "id": "personal-owned-doc-catalog-transaction-delete-v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 2,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 1,
+          "deleteRequests": 2,
+          "constraints": [
+            "owned private personal knowledge base and exact write allowlist",
+            "UI and closed-browser replay both use action=destroyWithChildren",
+            "meta.deletedDocIds must contain exactly the target Doc ID",
+            "catalog absence and rejected direct read are required",
+            "the observed product effect is trashed, not a claimed hard delete"
+          ]
+        }
+      ],
+      "notes": "Doc whole-object removal is implemented by the catalog transaction PUT, not DELETE /api/docs/{id}. It is non-idempotent, must never be blindly retried and requires Preview, full-path confirmation, encrypted snapshot and read-back."
+    },
+    {
+      "capability": "delete_sheet",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "liveWriteEnabled": true,
+      "method": "PUT",
+      "path": "/api/catalog_nodes",
+      "deletionEffect": "sheet_object",
+      "targetResourceType": "Sheet",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data",
+        "meta.book_id",
+        "meta.node_uuid",
+        "meta.toc_updated_at",
+        "meta.deletedDocIds"
+      ],
+      "verifiedScenarios": [
+        {
+          "id": "personal-owned-sheet-catalog-transaction-delete-v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 2,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 1,
+          "deleteRequests": 2,
+          "constraints": [
+            "owned private personal knowledge base and exact write allowlist",
+            "the target must read back as type=Sheet and format=lakesheet",
+            "UI and closed-browser replay both use action=destroyWithChildren",
+            "meta.deletedDocIds must contain exactly the target Sheet document ID",
+            "catalog absence and rejected direct read are required",
+            "the observed product effect is trashed, not a claimed hard delete"
+          ]
+        }
+      ],
+      "notes": "Sheet whole-object removal uses the same catalog transaction as Doc but retains a separate typed capability so the service cannot confuse Doc and lakesheet targets."
+    },
+    {
+      "capability": "delete_book",
+      "verified": true,
+      "observedHostTypes": ["personal"],
+      "verifiedHostTypes": ["personal"],
+      "liveWriteEnabled": true,
+      "method": "DELETE",
+      "path": "/api/books/{bookId}",
+      "deletionEffect": "knowledge_base",
+      "targetResourceType": "KnowledgeBase",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data.id",
+        "data.slug",
+        "data.name",
+        "data.type",
+        "data.organization_id",
+        "data.public"
+      ],
+      "verifiedScenarios": [
+        {
+          "id": "personal-owned-nonempty-book-irreversible-delete-v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-16T00:00:00.000Z",
+          "writeAttempts": 2,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 1,
+          "deleteRequests": 2,
+          "constraints": [
+            "owned private personal knowledge base and exact write allowlist",
+            "UI requires typing the exact knowledge-base slug before confirmation",
+            "non-empty fixture contained one Doc and one Sheet",
+            "the UI explicitly describes the operation as irreversible and deleting all knowledge-base data",
+            "personal list absence and rejected direct read are required",
+            "no complete local snapshot or original URL, ID, permissions and history recovery is claimed"
+          ]
+        }
+      ],
+      "notes": "Whole knowledge-base deletion is a one-shot DELETE with no safe retry. Product Confirm additionally requires allow_nonempty for non-empty catalogs, deletion consent, exact full-path confirmation, best_effort mode and the object-deletion switch."
+    },
+    {
       "capability": "initialize_sheet",
       "verified": true,
       "observedHostTypes": ["personal"],
@@ -552,7 +862,8 @@
       "verified": true,
       "observedHostTypes": ["organization", "personal"],
       "verifiedHostTypes": ["personal"],
-      "liveWriteEnabled": false,
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["personal"],
       "method": "PUT",
       "path": "/api/docs/{docId}/content",
       "deletionEffect": "content",

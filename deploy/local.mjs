@@ -34,7 +34,11 @@ const child = spawn(
   [join(projectRoot, entry), ...commandArgs],
   {
     cwd: projectRoot,
-    env: { ...process.env, ...localEnvironment },
+    env: {
+      ...process.env,
+      ...localEnvironment,
+      YUQUE_MCP_ENV_FILE: envPath,
+    },
     stdio: "inherit",
   },
 );
@@ -81,10 +85,22 @@ async function loadOrCreateEnvironment() {
       "CHANGE_TTL_SECONDS=600",
       "YUQUE_REQUEST_TIMEOUT_MS=15000",
       "WRITE_CONSISTENCY_MODE=strict",
+      "WRITE_KILL_SWITCH=false",
       "ALLOW_UNVERIFIED_CONTRACTS=false",
       "ALLOW_OBJECT_DELETION=false",
       "ALLOW_PERMISSION_CHANGES=false",
       "YUQUE_WRITE_BOOK_ALLOWLIST=",
+      "ALLOW_INSECURE_HTTP=false",
+      "MAX_MCP_SESSIONS=32",
+      "MAX_CONCURRENT_REQUESTS=16",
+      "MAX_REQUESTS_PER_SESSION=4",
+      "MCP_SESSION_IDLE_SECONDS=1800",
+      "MAX_REQUEST_BODY_BYTES=1572864",
+      "MAX_CONCURRENT_LOGINS=2",
+      "GRACEFUL_SHUTDOWN_SECONDS=30",
+      "METRICS_ENABLED=true",
+      "YUQUE_HTTPS_PROXY=",
+      "YUQUE_CA_FILE=",
       "",
     ].join("\n");
     await writeFile(envPath, serialized, {

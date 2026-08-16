@@ -64,6 +64,13 @@ export class ContractRegistry {
         `Yuque web write '${capability}' is captured but remains disabled until every required serialization, atomic conflict and write read-back gate is verified`,
       );
     }
+    const liveWriteHostTypes = contract.liveWriteHostTypes ??
+      contract.verifiedHostTypes ?? ["organization"];
+    if (!liveWriteHostTypes.includes(hostType)) {
+      throw new ContractError(
+        `Yuque web write '${capability}' is not enabled on the ${hostType} Host`,
+      );
+    }
     return contract;
   }
 
@@ -126,6 +133,7 @@ function validateManifest(value: ContractManifest): void {
         "permission",
         "doc_object",
         "sheet_object",
+        "catalog_node",
         "knowledge_base",
       ].includes(endpoint.deletionEffect)
     ) {
@@ -148,16 +156,25 @@ function validateManifest(value: ContractManifest): void {
     }
     if (
       endpoint.targetResourceType !== undefined &&
-      !["Doc", "Sheet", "KnowledgeBase", "Collaboration"].includes(
-        endpoint.targetResourceType,
-      )
+      ![
+        "Doc",
+        "Sheet",
+        "CatalogNode",
+        "KnowledgeBase",
+        "Collaboration",
+        "Comment",
+      ].includes(endpoint.targetResourceType)
     ) {
       throw new ContractError(
         `Invalid targetResourceType for ${endpoint.capability}`,
       );
     }
     validateDestructiveContract(endpoint);
-    for (const field of ["observedHostTypes", "verifiedHostTypes"] as const) {
+    for (const field of [
+      "observedHostTypes",
+      "verifiedHostTypes",
+      "liveWriteHostTypes",
+    ] as const) {
       if (
         endpoint[field]?.some(
           (hostType) => hostType !== "organization" && hostType !== "personal",
@@ -165,6 +182,23 @@ function validateManifest(value: ContractManifest): void {
       ) {
         throw new ContractError(`Invalid ${field} for ${endpoint.capability}`);
       }
+    }
+    if (
+      endpoint.liveWriteHostTypes !== undefined &&
+      endpoint.liveWriteEnabled !== true
+    ) {
+      throw new ContractError(
+        `liveWriteHostTypes requires liveWriteEnabled=true: ${endpoint.capability}`,
+      );
+    }
+    if (
+      endpoint.liveWriteHostTypes?.some(
+        (hostType) => !endpoint.verifiedHostTypes?.includes(hostType),
+      )
+    ) {
+      throw new ContractError(
+        `liveWriteHostTypes must be a subset of verifiedHostTypes: ${endpoint.capability}`,
+      );
     }
     for (const scenario of endpoint.verifiedScenarios ?? []) {
       if (
@@ -197,6 +231,10 @@ function validateDestructiveContract(endpoint: EndpointContract): void {
   const expected = {
     doc_object: { capability: "delete_doc", resource: "Doc" },
     sheet_object: { capability: "delete_sheet", resource: "Sheet" },
+    catalog_node: {
+      capability: "change_catalog",
+      resource: "CatalogNode",
+    },
     knowledge_base: {
       capability: "delete_book",
       resource: "KnowledgeBase",
@@ -220,7 +258,9 @@ function validateDestructiveContract(endpoint: EndpointContract): void {
   if (
     !endpoint.verified ||
     !endpoint.liveWriteEnabled ||
-    !endpoint.verifiedHostTypes?.includes("personal")
+    !endpoint.verifiedHostTypes?.includes("personal") ||
+    (endpoint.liveWriteHostTypes !== undefined &&
+      !endpoint.liveWriteHostTypes.includes("personal"))
   ) {
     throw new ContractError(
       `Destructive contract must be verified and liveWriteEnabled on the personal Host: ${endpoint.capability}`,

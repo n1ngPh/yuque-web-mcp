@@ -1,23 +1,47 @@
 import { loadConfig } from "./config.js";
 import { createApplication } from "./app.js";
 import { startHttpServer } from "./http-server.js";
+import { logger } from "./logger.js";
+import { acquireRuntimeLock } from "./runtime-lock.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const app = await createApplication(config);
-  const { server } = startHttpServer(app);
+  const runtimeLock = await acquireRuntimeLock(config.dataDir);
+  let app;
+  try {
+    app = await createApplication(config);
+  } catch (error) {
+    await runtimeLock.release();
+    throw error;
+  }
+  let runtime;
+  try {
+    runtime = startHttpServer(app);
+  } catch (error) {
+    app.db.close();
+    await app.client.close();
+    await runtimeLock.release();
+    throw error;
+  }
+  const { shutdown } = runtime;
 
-  const shutdown = () => {
-    server.close(() => {
-      app.db.close();
-      process.exit(0);
-    });
+  let stopping = false;
+  const stop = async (signal: string) => {
+    if (stopping) return;
+    stopping = true;
+    logger.log("info", "shutdown_requested", { signal });
+    const result = await shutdown();
+    app.db.close();
+    await runtimeLock.release();
+    process.exitCode = result.writesDrained ? 0 : 1;
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", () => void stop("SIGINT"));
+  process.once("SIGTERM", () => void stop("SIGTERM"));
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : "Startup failed");
+  logger.log("error", "startup_failed", {
+    error_class: error instanceof Error ? error.name : "UnknownError",
+  });
   process.exit(1);
 });

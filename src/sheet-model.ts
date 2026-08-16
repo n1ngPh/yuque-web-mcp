@@ -867,36 +867,100 @@ function validateStyle(value: unknown, label: string): SheetCellStyle {
   const record = asRecord(value, label);
   const allowed = new Set([
     "number_format",
+    "numberFormat",
     "bold",
     "italic",
     "text_color",
+    "textColor",
     "fill_color",
+    "fillColor",
     "horizontal_align",
+    "horizontalAlign",
   ]);
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) {
       throw new Error(`${label}.${key} is not a supported basic style`);
     }
   }
-  const textColor = optionalColor(record.text_color, `${label}.text_color`);
-  const fillColor = optionalColor(record.fill_color, `${label}.fill_color`);
+  const numberFormat = optionalAliasString(
+    record,
+    "number_format",
+    "numberFormat",
+    label,
+  );
+  if (numberFormat && !/^number(?::[0-9]+)?$/.test(numberFormat)) {
+    throw new Error(
+      `${label}.number_format must use the verified number or number:<decimal-places> form`,
+    );
+  }
+  const textColor = optionalAliasColor(
+    record,
+    "text_color",
+    "textColor",
+    label,
+  );
+  const fillColor = optionalAliasColor(
+    record,
+    "fill_color",
+    "fillColor",
+    label,
+  );
   const align = optionalString(
-    record.horizontal_align,
+    aliasValue(record, "horizontal_align", "horizontalAlign", label),
     `${label}.horizontal_align`,
   );
   if (align && !["left", "center", "right"].includes(align)) {
     throw new Error(`${label}.horizontal_align is invalid`);
   }
   return {
-    ...(typeof record.number_format === "string"
-      ? { numberFormat: record.number_format }
-      : {}),
+    ...(numberFormat ? { numberFormat } : {}),
     ...(typeof record.bold === "boolean" ? { bold: record.bold } : {}),
     ...(typeof record.italic === "boolean" ? { italic: record.italic } : {}),
     ...(textColor ? { textColor } : {}),
     ...(fillColor ? { fillColor } : {}),
     ...(align ? { horizontalAlign: align as "left" | "center" | "right" } : {}),
   };
+}
+
+function aliasValue(
+  record: Record<string, unknown>,
+  externalName: string,
+  normalizedName: string,
+  label: string,
+): unknown {
+  if (
+    record[externalName] !== undefined &&
+    record[normalizedName] !== undefined
+  ) {
+    throw new Error(
+      `${label} must not provide both ${externalName} and ${normalizedName}`,
+    );
+  }
+  return record[externalName] ?? record[normalizedName];
+}
+
+function optionalAliasString(
+  record: Record<string, unknown>,
+  externalName: string,
+  normalizedName: string,
+  label: string,
+): string | undefined {
+  return optionalString(
+    aliasValue(record, externalName, normalizedName, label),
+    `${label}.${externalName}`,
+  );
+}
+
+function optionalAliasColor(
+  record: Record<string, unknown>,
+  externalName: string,
+  normalizedName: string,
+  label: string,
+): string | undefined {
+  return optionalColor(
+    aliasValue(record, externalName, normalizedName, label),
+    `${label}.${externalName}`,
+  );
 }
 
 function optionalColor(value: unknown, label: string): string | undefined {

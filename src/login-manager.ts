@@ -9,6 +9,7 @@ import type { AppConfig } from "./config.js";
 import { randomBase64Url } from "./crypto.js";
 import type { SessionStore } from "./session-store.js";
 import type { LoginStatus, YuqueAccount } from "./types.js";
+import { playwrightProxy } from "./network-policy.js";
 
 interface LoginAttempt {
   employeeId: string;
@@ -28,6 +29,24 @@ interface LoginAttempt {
 
 export const LOGIN_PROVIDERS = ["dingtalk", "wechat", "alipay"] as const;
 export type LoginProvider = (typeof LOGIN_PROVIDERS)[number];
+
+export const CHROMIUM_LAUNCH_ARGS = ["--disable-dev-shm-usage"] as const;
+// Playwright defaults chromiumSandbox to false for library launches and would
+// otherwise append --no-sandbox even when the caller did not provide that
+// flag. Keep this explicit so container deployments exercise Chromium's real
+// OS sandbox instead of relying on a misleading argument-list check.
+export const CHROMIUM_SANDBOX_ENABLED = true as const;
+
+export function chromiumLaunchOptions(config: AppConfig) {
+  const proxy = playwrightProxy(config);
+  return {
+    executablePath: config.chromiumExecutable,
+    headless: true,
+    chromiumSandbox: CHROMIUM_SANDBOX_ENABLED,
+    args: [...CHROMIUM_LAUNCH_ARGS],
+    ...(proxy ? { proxy } : {}),
+  };
+}
 
 export function parseLoginProvider(value: unknown): LoginProvider | undefined {
   if (typeof value !== "string") return undefined;
@@ -64,8 +83,11 @@ export class LoginManager {
     const activeCount = [...this.attemptsById.values()].filter((attempt) =>
       ["starting", "waiting_scan"].includes(attempt.state),
     ).length;
-    if (activeCount >= 2)
-      throw new Error("At most two employee login flows may run concurrently");
+    const maximum = this.config.maxConcurrentLogins ?? 2;
+    if (activeCount >= maximum)
+      throw new Error(
+        `At most ${String(maximum)} login flows may run concurrently`,
+      );
 
     const attempt: LoginAttempt = {
       employeeId,
@@ -211,6 +233,20 @@ export class LoginManager {
     await Promise.all(attempts.map((attempt) => this.closeAttempt(attempt)));
   }
 
+  activeCount(): number {
+    return [...this.attemptsById.values()].filter((attempt) =>
+      ["starting", "waiting_scan"].includes(attempt.state),
+    ).length;
+  }
+
+  async shutdown(): Promise<void> {
+    await Promise.all(
+      [...this.attemptsById.values()].map((attempt) =>
+        this.closeAttempt(attempt),
+      ),
+    );
+  }
+
   private describeAttempt(attempt: LoginAttempt): {
     status: LoginStatus;
     loginUrl: string;
@@ -227,11 +263,7 @@ export class LoginManager {
 
   private async run(attempt: LoginAttempt): Promise<void> {
     try {
-      const browser = await chromium.launch({
-        executablePath: this.config.chromiumExecutable,
-        headless: true,
-        args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      });
+      const browser = await chromium.launch(chromiumLaunchOptions(this.config));
       attempt.browser = browser;
       const context = await browser.newContext({ locale: "zh-CN" });
       attempt.context = context;

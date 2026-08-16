@@ -1,5 +1,6 @@
 import type { AppConfig } from "./config.js";
 import type { ContractRegistry } from "./contracts.js";
+import { SERVER_VERSION } from "./version.js";
 
 export type CapabilityAvailability = "available" | "preview_only" | "disabled";
 
@@ -36,6 +37,10 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
   available("yuque_list_docs", personalAndOrganization),
   available("yuque_list_all_docs", personalAndOrganization),
   available("yuque_get_doc", personalAndOrganization),
+  available("yuque_list_comments", personal),
+  available("yuque_list_doc_versions", personal),
+  available("yuque_get_doc_version", personal),
+  available("yuque_preview_restore_doc_version", personal),
   available("yuque_get_sheet", personalAndOrganization),
   available("yuque_preview_create_book", personal),
   available("yuque_preview_update_book", personal),
@@ -44,9 +49,19 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
     "permission_changes_disabled",
     personal,
   ),
-  disabled("yuque_preview_delete_doc", "contract_not_verified"),
-  disabled("yuque_preview_delete_sheet", "contract_not_verified"),
-  disabled("yuque_preview_delete_book", "contract_not_verified"),
+  available("yuque_preview_change_catalog", personal),
+  available("yuque_preview_change_comment", personal),
+  previewOnly("yuque_preview_delete_doc", "object_deletion_disabled", personal),
+  previewOnly(
+    "yuque_preview_delete_sheet",
+    "object_deletion_disabled",
+    personal,
+  ),
+  previewOnly(
+    "yuque_preview_delete_book",
+    "object_deletion_disabled",
+    personal,
+  ),
   available("yuque_preview_create_doc", personalAndOrganization),
   available("yuque_preview_update_doc", personalAndOrganization),
   available("yuque_preview_create_sheet", personal),
@@ -67,12 +82,13 @@ export function buildCapabilityReport(
 ): Record<string, unknown> {
   const bestEffort = config.writeConsistencyMode === "best_effort";
   return {
-    server_version: "0.3.3",
+    server_version: SERVER_VERSION,
     registry_version: 1,
     contract_version: contracts.manifest.version,
     contract_verified_at: contracts.manifest.verifiedAt,
     write_consistency_mode: config.writeConsistencyMode,
     safeguards: {
+      write_kill_switch_active: config.writeKillSwitch === true,
       object_deletion_enabled: config.allowObjectDeletion === true,
       permission_changes_enabled: config.allowPermissionChanges === true,
       exact_write_allowlist_configured:
@@ -80,6 +96,14 @@ export function buildCapabilityReport(
     },
     capabilities: CAPABILITY_POLICIES.map((policy): CapabilityStatus => {
       if (policy.tool === "yuque_confirm_change") {
+        if (config.writeKillSwitch === true) {
+          return {
+            ...policy,
+            availability: "disabled",
+            required_write_mode: "best_effort",
+            reasonCode: "write_kill_switch_active",
+          };
+        }
         if (bestEffort) {
           const { reasonCode: _reasonCode, ...enabledPolicy } = policy;
           return {
@@ -110,6 +134,26 @@ export function buildCapabilityReport(
               reasonCode: "permission_changes_disabled",
             };
       }
+      if (
+        policy.tool === "yuque_preview_delete_doc" ||
+        policy.tool === "yuque_preview_delete_sheet" ||
+        policy.tool === "yuque_preview_delete_book"
+      ) {
+        if (config.allowObjectDeletion === true) {
+          const { reasonCode: _reasonCode, ...enabledPolicy } = policy;
+          return {
+            ...enabledPolicy,
+            availability: "available",
+            required_write_mode: "none",
+          };
+        }
+        return {
+          ...policy,
+          availability: "disabled",
+          required_write_mode: "none",
+          reasonCode: "object_deletion_disabled",
+        };
+      }
       return {
         ...policy,
         required_write_mode: "none",
@@ -138,11 +182,15 @@ function previewOnly(
   };
 }
 
-function disabled(tool: string, reasonCode: string): CapabilityPolicy {
+function disabled(
+  tool: string,
+  reasonCode: string,
+  hostTypes: readonly CapabilityHostType[] = personalAndOrganization,
+): CapabilityPolicy {
   return {
     tool,
     availability: "disabled",
-    hostTypes: [...personalAndOrganization],
+    hostTypes: [...hostTypes],
     reasonCode,
   };
 }

@@ -11,6 +11,7 @@ import {
 } from "./lake-document.js";
 import {
   applyLakeSheetChartOperations,
+  decodeLakeSheetDraft,
   encodeLakeSheetDraft,
   type SheetChartDiffEntry,
 } from "./sheet-codec.js";
@@ -74,6 +75,10 @@ interface ExecutionResult {
 }
 
 export class ChangeStore {
+  private readonly targetLocks = new Map<string, Promise<void>>();
+  private acceptingConfirms = true;
+  private activeConfirms = 0;
+
   constructor(
     private readonly config: AppConfig,
     private readonly db: AppDatabase,
@@ -81,6 +86,9 @@ export class ChangeStore {
     private readonly client: YuqueWebClient,
   ) {
     this.db.purgeExpiredSnapshots();
+    for (const row of this.db.markInterruptedChangesUnknown()) {
+      this.audit(row, "unknown", "process_interrupted");
+    }
   }
 
   async previewCreateBook(
@@ -252,6 +260,288 @@ export class ChangeStore {
     );
   }
 
+  async previewCatalogChange(
+    ownerId: string,
+    input: {
+      bookUrl: string;
+      action: "create" | "rename" | "move" | "delete";
+      nodeUuid?: string;
+      targetUuid?: string;
+      position?: "into" | "after";
+      title?: string;
+      parentUuid?: string;
+      expectedParentPath?: string;
+    },
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    if (input.action === "delete" && this.config.allowObjectDeletion !== true) {
+      throw new Error(
+        "Directory deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with an exact write allowlist",
+      );
+    }
+    const prepared = await this.client.prepareCatalogChange(ownerId, input);
+    const before =
+      prepared.action === "create"
+        ? "(directory does not exist)"
+        : `path: ${prepared.displayPath}`;
+    const after =
+      prepared.action === "delete"
+        ? "(empty directory deleted)"
+        : `path: ${prepared.targetDisplayPath}`;
+    const diff = createTwoFilesPatch(
+      prepared.displayPath,
+      prepared.targetDisplayPath,
+      before,
+      after,
+      "baseline",
+      "proposed",
+    );
+    const isDelete = prepared.action === "delete";
+    const isDirectory =
+      prepared.action === "create" || prepared.node?.type === "TITLE";
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "change_catalog",
+        bookUrl: prepared.book.url,
+        targetUrl: prepared.book.url,
+        displayPath: prepared.targetDisplayPath,
+        baseFingerprint: prepared.baselineFingerprint,
+        catalogAction: prepared.action,
+        catalogNodeUuid: prepared.node?.uuid,
+        catalogTargetUuid: prepared.target?.uuid,
+        catalogPosition: prepared.position,
+        catalogTitle: prepared.title,
+        parentUuid: prepared.parentUuid,
+        catalogExpectedParentPath: prepared.expectedParentPath,
+        resourceType: isDirectory ? "CatalogDirectory" : "CatalogDocument",
+        ...(isDelete ? { confirmationText: prepared.displayPath } : {}),
+      },
+      diff,
+      [
+        "Catalog writes have no atomic CAS; strict mode remains Preview-only and best_effort requires an exact personal knowledge-base allowlist.",
+        isDelete
+          ? "Only a verified empty directory is deleted. Non-empty directory deletion and document deletion through this tool are blocked."
+          : isDirectory
+            ? "Confirm re-reads the complete catalog fingerprint before sending one verified request and then verifies the final directory path."
+            : "Doc and Sheet directory moves use the verified catalog transaction. Confirm re-reads the complete catalog fingerprint, sends one request, verifies the unchanged document identity and returns the final full path.",
+      ],
+      {
+        added_lines: isDelete ? 0 : 1,
+        removed_lines: isDelete ? 1 : 0,
+        has_deletions: isDelete,
+      },
+    );
+  }
+
+  async previewCommentChange(
+    ownerId: string,
+    input: {
+      docUrl: string;
+      action: "create" | "update" | "delete";
+      commentId?: string;
+      body?: string;
+    },
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    const prepared = await this.client.prepareCommentChange(ownerId, input);
+    const before = prepared.current?.body ?? "";
+    const after = prepared.action === "delete" ? "" : (prepared.body ?? "");
+    const diff = createTwoFilesPatch(
+      prepared.action === "create" ? "/dev/null" : prepared.displayPath,
+      prepared.action === "delete" ? "/dev/null" : prepared.displayPath,
+      before,
+      after,
+      prepared.current?.updatedAt ?? "",
+      "proposed",
+    );
+    const isDelete = prepared.action === "delete";
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "change_comment",
+        docUrl: prepared.doc.url ?? input.docUrl,
+        targetUrl: prepared.doc.url ?? input.docUrl,
+        bookUrl: prepared.doc.bookUrl,
+        displayPath: prepared.displayPath,
+        baseFingerprint: prepared.baselineFingerprint,
+        commentAction: prepared.action,
+        commentId: prepared.commentId,
+        commentText: isDelete ? prepared.current?.body : prepared.body,
+        commentBodyAsl: isDelete ? prepared.current?.bodyAsl : prepared.bodyAsl,
+        commentBodyHtml: prepared.bodyHtml,
+        resourceType: "Comment",
+      },
+      diff,
+      [
+        "Comment writes have no atomic CAS; strict mode remains Preview-only and best_effort requires the exact personal knowledge-base allowlist.",
+        isDelete
+          ? "This removes one own comment, not the containing Doc. The encrypted pending change retains the removed Lake body for audit/recovery assistance."
+          : "Confirm re-reads the complete comment collection fingerprint, sends one request and verifies the exact comment ID and Lake body.",
+      ],
+      {
+        added_lines: after ? normalizeText(after).split("\n").length : 0,
+        removed_lines: before ? normalizeText(before).split("\n").length : 0,
+        has_deletions: isDelete,
+      },
+    );
+  }
+
+  async previewDeleteDoc(
+    ownerId: string,
+    input: { docUrl: string },
+  ): Promise<PreviewResult> {
+    return this.previewDeleteObject(ownerId, input.docUrl, "Doc");
+  }
+
+  async previewDeleteSheet(
+    ownerId: string,
+    input: { docUrl: string },
+  ): Promise<PreviewResult> {
+    return this.previewDeleteObject(ownerId, input.docUrl, "Sheet");
+  }
+
+  async previewDeleteBook(
+    ownerId: string,
+    input: { bookUrl: string; allowNonempty: boolean },
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    if (this.config.allowObjectDeletion !== true) {
+      throw new Error(
+        "Knowledge-base deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with an exact write allowlist",
+      );
+    }
+    const prepared = await this.client.prepareBookDeletion(ownerId, input);
+    const catalogLines = prepared.catalog.map(
+      (node) => `- ${node.displayPath} [${node.type}]`,
+    );
+    const before = [
+      `resource_type: KnowledgeBase`,
+      `name: ${prepared.book.name}`,
+      `full_path: ${prepared.displayPath}`,
+      `url: ${prepared.book.url}`,
+      `catalog_nodes: ${String(prepared.catalog.length)}`,
+      ...(catalogLines.length > 0 ? ["catalog:", ...catalogLines] : []),
+    ].join("\n");
+    const diff = createTwoFilesPatch(
+      prepared.displayPath,
+      "/dev/null",
+      before,
+      "",
+      prepared.book.updatedAt ?? "baseline",
+      "irreversibly-deleted",
+    );
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "delete_book",
+        bookUrl: prepared.book.url,
+        targetUrl: prepared.book.url,
+        displayPath: prepared.displayPath,
+        bookId: prepared.book.id,
+        bookName: prepared.book.name,
+        ownerLogin: prepared.book.ownerLogin,
+        baseFingerprint: prepared.baseFingerprint,
+        resourceType: "KnowledgeBase",
+        confirmationText: prepared.displayPath,
+        allowNonempty: prepared.allowNonempty,
+      },
+      diff,
+      [
+        "Knowledge-base deletion is irreversible in the verified Yuque UI and removes every object in the catalog.",
+        "The local service cannot create a complete recoverable snapshot of an entire knowledge base; no original URL, ID, permissions or version history can be restored after Confirm.",
+        "Confirm requires allow_nonempty=true for a non-empty catalog, confirm_deletions=true, the exact full path, best_effort mode, ALLOW_OBJECT_DELETION=true and the exact personal knowledge-base allowlist.",
+      ],
+      {
+        added_lines: 0,
+        removed_lines: before.split("\n").length,
+        has_deletions: true,
+      },
+    );
+  }
+
+  private async previewDeleteObject(
+    ownerId: string,
+    docUrl: string,
+    resourceType: "Doc" | "Sheet",
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    if (this.config.allowObjectDeletion !== true) {
+      throw new Error(
+        "Whole-object deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with an exact write allowlist",
+      );
+    }
+    const prepared = await this.client.prepareObjectDeletion(ownerId, {
+      docUrl,
+      resourceType,
+    });
+    const contentSummary =
+      resourceType === "Doc"
+        ? [
+            `content_lines: ${String(
+              Math.max(1, (prepared.doc?.markdown ?? "").split("\n").length),
+            )}`,
+            `proprietary_blocks: ${String(
+              proprietaryBlockTypes(prepared.doc?.lakeContent ?? "").length,
+            )}`,
+          ]
+        : [
+            `worksheets: ${String(prepared.sheet?.workbook.worksheets.length ?? 0)}`,
+            `populated_cells: ${String(
+              prepared.sheet?.workbook.worksheets.reduce(
+                (total, worksheet) =>
+                  total + Object.keys(worksheet.cells).length,
+                0,
+              ) ?? 0,
+            )}`,
+          ];
+    const before = [
+      `resource_type: ${resourceType}`,
+      `title: ${
+        resourceType === "Doc" ? prepared.doc?.title : prepared.sheet?.title
+      }`,
+      `full_path: ${prepared.displayPath}`,
+      `version: ${String(prepared.version)}`,
+      ...contentSummary,
+    ].join("\n");
+    const diff = createTwoFilesPatch(
+      prepared.displayPath,
+      "/dev/null",
+      before,
+      "",
+      `version-${String(prepared.version)}`,
+      "trashed",
+    );
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: resourceType === "Doc" ? "delete_doc" : "delete_sheet",
+        bookUrl: prepared.book.url,
+        docUrl: prepared.targetUrl,
+        targetUrl: prepared.targetUrl,
+        displayPath: prepared.displayPath,
+        title:
+          resourceType === "Doc" ? prepared.doc?.title : prepared.sheet?.title,
+        baseFingerprint: prepared.baseFingerprint,
+        baseVersion: prepared.version,
+        catalogNodeUuid: prepared.node.uuid,
+        resourceType,
+        confirmationText: prepared.displayPath,
+      },
+      diff,
+      [
+        "Confirm moves the whole object out of the active catalog (trashed); it does not claim a permanent hard delete.",
+        "Confirm saves a seven-day AES-256-GCM local snapshot first. Recreating from that snapshot produces a new object and cannot restore the original URL, ID or version history.",
+        "Whole-object deletion has no atomic CAS; strict mode remains Preview-only and best_effort requires ALLOW_OBJECT_DELETION=true plus the exact personal knowledge-base allowlist.",
+      ],
+      {
+        added_lines: 0,
+        removed_lines: before.split("\n").length,
+        has_deletions: true,
+      },
+    );
+  }
+
   async previewCreate(
     ownerId: string,
     input: {
@@ -366,7 +656,7 @@ export class ChangeStore {
       afterText = plan.afterText;
       warnings.push(...plan.warnings);
       warnings.push(
-        "Lossless ASL-to-HTML generation and modified-content replay are verified, but content confirm remains disabled because Yuque ignores draft_version and If-Match as atomic preconditions.",
+        "Yuque ignores draft_version and If-Match as atomic preconditions. Strict mode remains Preview-only; best_effort uses a local target queue, verified temporary lock ownership, a second baseline read, encrypted snapshot, single write attempt, timeout reconciliation and native write-back verification.",
       );
     }
 
@@ -548,7 +838,7 @@ export class ChangeStore {
         ...current.unsupportedFeatures.map(
           (feature) => `Preserved unsupported workbook feature: ${feature}`,
         ),
-        "HTTP-only Sheet save is verified, but confirm remains disabled because Yuque accepts stale draft_version and no atomic precondition is known.",
+        "Yuque accepts stale draft_version. Strict mode remains Preview-only; best_effort requires an exact personal knowledge-base allowlist and uses local serialization, verified temporary lock ownership, a second workbook read, encrypted snapshot, a single save attempt, timeout reconciliation and semantic write-back verification.",
       ],
       sheetDiffStats(applied.diff),
     );
@@ -560,6 +850,53 @@ export class ChangeStore {
   ): Promise<PreviewResult> {
     this.assertOwner(ownerId);
     const snapshot = this.loadSnapshot(snapshotId);
+    if (
+      snapshot.resourceType === "sheet" &&
+      snapshot.sheetDraft !== undefined
+    ) {
+      const current = await this.client.getSheet(ownerId, snapshot.targetUrl);
+      const restored = decodeLakeSheetDraft({
+        id: current.id,
+        title: current.title,
+        draftVersion: snapshot.version,
+        bodyDraft: snapshot.sheetDraft,
+      });
+      const currentText = sheetSnapshotPreviewText(current.workbook);
+      const restoredText = sheetSnapshotPreviewText(restored.workbook);
+      if (currentText === restoredText) {
+        throw new Error("The Sheet already matches this snapshot");
+      }
+      const diff = createTwoFilesPatch(
+        `${current.title} (current)`,
+        `${snapshot.title} (snapshot)`,
+        currentText,
+        restoredText,
+        `version-${current.version}`,
+        `snapshot-${snapshotId}`,
+      );
+      return this.savePreview(
+        {
+          schemaVersion: 3,
+          kind: "restore_sheet_snapshot",
+          docUrl: snapshot.targetUrl,
+          targetUrl: snapshot.targetUrl,
+          displayPath: current.location.displayPath,
+          title: current.title,
+          sheetDraft: snapshot.sheetDraft,
+          baseFingerprint: current.workbook.fingerprint,
+          baseWorkbookFingerprint: current.workbook.fingerprint,
+          baseVersion: current.version,
+          snapshotId,
+          resourceType: "Sheet",
+        },
+        diff,
+        [
+          "Restoring creates a new Sheet version and preserves Yuque history.",
+          "The encrypted snapshot contains the complete native LakeSheet draft captured immediately before a confirmed write.",
+          "Any concurrent workbook change after this Preview blocks Confirm; best_effort and an exact personal knowledge-base allowlist are still required.",
+        ],
+      );
+    }
     if (
       snapshot.resourceType !== "doc" ||
       snapshot.lakeContent === undefined ||
@@ -602,7 +939,82 @@ export class ChangeStore {
       diff,
       [
         "Restoring is a new version and never deletes Yuque history.",
-        "Confirm remains disabled until an atomic concurrency guard and timeout reconciliation are verified.",
+        "Strict mode remains Preview-only. Best-effort restoration uses the same lock, exact-baseline, single-write, timeout-reconciliation and native read-back safeguards as a normal Doc update.",
+      ],
+    );
+  }
+
+  async previewRestoreDocVersion(
+    ownerId: string,
+    input: { docUrl: string; versionId: string },
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    const current = await this.client.getDoc(ownerId, input.docUrl);
+    const historical = await this.client.getDocVersion(
+      ownerId,
+      input.docUrl,
+      input.versionId,
+    );
+    if (
+      historical.doc.url !== input.docUrl ||
+      historical.version.docId !== current.id
+    ) {
+      throw new Error("Historical version does not belong to the selected Doc");
+    }
+    if (historical.version.format !== "lake") {
+      throw new Error("Only native Lake Doc versions can be restored safely");
+    }
+    assertNonEmptyDocument(historical.version.plainText);
+    const protectedBlocks = [
+      ...proprietaryBlockTypes(current.lakeContent),
+      ...proprietaryBlockTypes(historical.version.content),
+    ];
+    if (protectedBlocks.length > 0) {
+      throw new Error(
+        `Historical version restore is blocked because proprietary Lake blocks are present: ${[...new Set(protectedBlocks)].join(", ")}`,
+      );
+    }
+    if (
+      current.lakeContent === historical.version.content &&
+      current.title === historical.version.title
+    ) {
+      throw new Error(
+        "The Doc already matches the selected historical version",
+      );
+    }
+    const diff = createTwoFilesPatch(
+      current.title,
+      historical.version.title,
+      normalizeText(current.markdown),
+      normalizeText(historical.version.plainText),
+      `version-${current.version}`,
+      `history-${historical.version.id}`,
+    );
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "restore_doc_version",
+        docUrl: input.docUrl,
+        targetUrl: input.docUrl,
+        displayPath: current.location.displayPath,
+        title: current.title,
+        newTitle: historical.version.title,
+        convertedLake: historical.version.content,
+        markdown: historical.version.plainText,
+        baseFingerprint: current.fingerprint,
+        baseTargetFingerprint: fingerprint({
+          mode: "restore",
+          lake: current.lakeContent,
+          title: current.title,
+        }),
+        baseVersion: current.version,
+        mode: "restore",
+        versionId: historical.version.id,
+      },
+      diff,
+      [
+        `This Preview restores native content from historical version ${historical.version.id} by using the already verified Doc content-write path; it does not call an unverified dedicated restore endpoint.`,
+        "Confirm creates a new current version and preserves Yuque history. Strict mode remains Preview-only.",
       ],
     );
   }
@@ -615,6 +1027,16 @@ export class ChangeStore {
     confirmationText?: string,
   ): Promise<Record<string, unknown>> {
     this.assertOwner(ownerId);
+    if (!this.acceptingConfirms) {
+      throw new Error(
+        "The service is shutting down and is not accepting Confirm requests",
+      );
+    }
+    if (this.config.writeKillSwitch === true) {
+      throw new Error(
+        "All remote writes are disabled by the deployment WRITE_KILL_SWITCH",
+      );
+    }
     const { row, payload } = this.loadPreview(changeToken);
     if (
       !diffDigest ||
@@ -647,6 +1069,16 @@ export class ChangeStore {
     ) {
       throw new Error("Permission changes were disabled after Preview");
     }
+    if (
+      ((payload.kind === "change_catalog" &&
+        payload.catalogAction === "delete") ||
+        payload.kind === "delete_doc" ||
+        payload.kind === "delete_sheet" ||
+        payload.kind === "delete_book") &&
+      this.config.allowObjectDeletion !== true
+    ) {
+      throw new Error("Object deletion was disabled after Preview");
+    }
     if (payload.kind === "update_sheet_chart") {
       throw new Error(
         "Chart Confirm is disabled; cancel this local Preview. No remote write was attempted.",
@@ -658,9 +1090,13 @@ export class ChangeStore {
       throw new Error("Change token is no longer executable");
     }
     this.audit(row, "executing");
+    this.activeConfirms += 1;
 
     try {
-      const execution = await this.execute(ownerId, payload);
+      const execution = await this.withTargetLock(
+        payload.targetUrl || payload.bookUrl || payload.kind,
+        () => this.execute(ownerId, payload),
+      );
       this.db.transitionPendingChange(
         changeToken,
         ["executing"],
@@ -695,7 +1131,25 @@ export class ChangeStore {
         );
       }
       throw error;
+    } finally {
+      this.activeConfirms -= 1;
     }
+  }
+
+  activeWriteCount(): number {
+    return this.activeConfirms;
+  }
+
+  beginShutdown(): void {
+    this.acceptingConfirms = false;
+  }
+
+  async waitForIdle(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.activeConfirms > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return this.activeConfirms === 0;
   }
 
   objectDeletionEnabled(): boolean {
@@ -816,6 +1270,143 @@ export class ChangeStore {
       });
       return { state: "succeeded", result: changed };
     }
+    if (payload.kind === "change_catalog") {
+      if (
+        !payload.bookUrl ||
+        !payload.catalogAction ||
+        !payload.baseFingerprint
+      ) {
+        throw new Error("Stored catalog change is incomplete");
+      }
+      const catalogInput = {
+        bookUrl: payload.bookUrl,
+        action: payload.catalogAction,
+        ...(payload.catalogNodeUuid
+          ? { nodeUuid: payload.catalogNodeUuid }
+          : {}),
+        ...(payload.catalogTargetUuid
+          ? { targetUuid: payload.catalogTargetUuid }
+          : {}),
+        ...(payload.catalogPosition
+          ? { position: payload.catalogPosition }
+          : {}),
+        ...(payload.catalogTitle ? { title: payload.catalogTitle } : {}),
+        ...(payload.parentUuid ? { parentUuid: payload.parentUuid } : {}),
+        ...(payload.catalogExpectedParentPath
+          ? { expectedParentPath: payload.catalogExpectedParentPath }
+          : {}),
+      };
+      const current = await this.client.prepareCatalogChange(
+        ownerId,
+        catalogInput,
+      );
+      if (current.baselineFingerprint !== payload.baseFingerprint) {
+        throw new ConflictError(
+          "Catalog changed after Preview; no write was attempted",
+        );
+      }
+      const changed = await this.client.changeCatalog(ownerId, {
+        ...catalogInput,
+        baselineFingerprint: payload.baseFingerprint,
+      });
+      return {
+        state:
+          changed.status === "partial_created_unrenamed"
+            ? "partial"
+            : "succeeded",
+        result: changed,
+      };
+    }
+    if (payload.kind === "change_comment") {
+      if (
+        !payload.docUrl ||
+        !payload.commentAction ||
+        !payload.baseFingerprint
+      ) {
+        throw new Error("Stored comment change is incomplete");
+      }
+      const changed = await this.client.changeComment(ownerId, {
+        docUrl: payload.docUrl,
+        action: payload.commentAction,
+        ...(payload.commentId ? { commentId: payload.commentId } : {}),
+        ...(payload.commentText ? { body: payload.commentText } : {}),
+        ...(payload.commentBodyAsl ? { bodyAsl: payload.commentBodyAsl } : {}),
+        ...(payload.commentBodyHtml
+          ? { bodyHtml: payload.commentBodyHtml }
+          : {}),
+        baselineFingerprint: payload.baseFingerprint,
+      });
+      return { state: "succeeded", result: changed };
+    }
+    if (payload.kind === "delete_doc" || payload.kind === "delete_sheet") {
+      const resourceType = payload.kind === "delete_sheet" ? "Sheet" : "Doc";
+      if (
+        !payload.docUrl ||
+        !payload.baseFingerprint ||
+        payload.resourceType !== resourceType
+      ) {
+        throw new Error("Stored whole-object deletion is incomplete");
+      }
+      const prepared = await this.client.prepareObjectDeletion(ownerId, {
+        docUrl: payload.docUrl,
+        resourceType,
+      });
+      if (prepared.baseFingerprint !== payload.baseFingerprint) {
+        throw new ConflictError(
+          "The target object changed after Preview; no deletion request was sent",
+        );
+      }
+      const snapshotId =
+        resourceType === "Sheet"
+          ? this.createSheetSnapshot(prepared.sheet!)
+          : this.createDocSnapshot(prepared.doc!);
+      const deleted = await this.client.deleteObject(ownerId, {
+        docUrl: payload.docUrl,
+        resourceType,
+        baselineFingerprint: payload.baseFingerprint,
+      });
+      return {
+        state: "succeeded",
+        result: {
+          ...deleted,
+          snapshot_id: snapshotId,
+          snapshot_retention_days: 7,
+          recovery_semantics: "recreate_copy_only",
+        },
+      };
+    }
+    if (payload.kind === "delete_book") {
+      if (
+        !payload.bookUrl ||
+        !payload.baseFingerprint ||
+        payload.resourceType !== "KnowledgeBase" ||
+        payload.allowNonempty === undefined
+      ) {
+        throw new Error("Stored knowledge-base deletion is incomplete");
+      }
+      const prepared = await this.client.prepareBookDeletion(ownerId, {
+        bookUrl: payload.bookUrl,
+        allowNonempty: payload.allowNonempty,
+      });
+      if (prepared.baseFingerprint !== payload.baseFingerprint) {
+        throw new ConflictError(
+          "The knowledge base or its catalog changed after Preview; no deletion request was sent",
+        );
+      }
+      const deleted = await this.client.deleteBook(ownerId, {
+        bookUrl: payload.bookUrl,
+        allowNonempty: payload.allowNonempty,
+        baselineFingerprint: payload.baseFingerprint,
+      });
+      return {
+        state: "succeeded",
+        result: {
+          ...deleted,
+          snapshot_created: false,
+          recovery_semantics: "irreversible_no_complete_local_snapshot",
+        },
+      };
+    }
     if (payload.kind === "create_doc") {
       if (
         !payload.bookUrl ||
@@ -860,10 +1451,17 @@ export class ChangeStore {
         result: { ...created },
       };
     }
+    if (payload.kind === "restore_sheet_snapshot") {
+      return this.executeSheetSnapshotRestore(ownerId, payload);
+    }
     if (payload.kind === "update_sheet") {
       return this.executeSheetUpdate(ownerId, payload);
     }
-    if (payload.kind !== "update_doc" && payload.kind !== "restore_snapshot") {
+    if (
+      payload.kind !== "update_doc" &&
+      payload.kind !== "restore_snapshot" &&
+      payload.kind !== "restore_doc_version"
+    ) {
       throw new Error(
         `Change kind '${payload.kind}' is blocked until its live write contract is verified`,
       );
@@ -876,7 +1474,8 @@ export class ChangeStore {
     ) {
       throw new Error("Stored document change is incomplete");
     }
-    const current = await this.client.getDoc(ownerId, payload.docUrl);
+    const docUrl = payload.docUrl;
+    let current = await this.client.getDoc(ownerId, docUrl);
     const currentTarget = this.currentTargetFingerprint(current, payload);
     if (current.fingerprint !== payload.baseFingerprint) {
       if (currentTarget === payload.baseTargetFingerprint) {
@@ -896,82 +1495,139 @@ export class ChangeStore {
       );
     }
 
-    const contentUpdate = payload.mode !== "rename";
-    const titleUpdate =
-      Boolean(payload.newTitle) && payload.newTitle !== current.title;
-    if (contentUpdate)
-      this.client.assertDocContentUpdateEnabled(payload.docUrl);
-    if (titleUpdate) this.client.assertDocRenameEnabled(payload.docUrl);
+    return this.withVerifiedResourceLock(
+      ownerId,
+      { docId: current.id, docUrl, expectedVersion: current.version },
+      async () => {
+        current = await this.client.getDoc(ownerId, docUrl);
+        const lockedTarget = this.currentTargetFingerprint(current, payload);
+        if (current.fingerprint !== payload.baseFingerprint) {
+          if (lockedTarget === payload.baseTargetFingerprint) {
+            const preview = await this.rebasePreview(payload, current);
+            return {
+              state: "conflict",
+              result: {
+                status: "repreview_required",
+                reason:
+                  "The document changed outside the target region after lock acquisition; no write occurred. Review and confirm the new preview.",
+                preview,
+              },
+            };
+          }
+          throw new ConflictError(
+            "The target title or content region changed after lock acquisition; no content was written.",
+          );
+        }
 
-    this.createDocSnapshot(current);
-    let contentWritten = false;
-    let expectedBodyHtml: string | undefined;
-    try {
-      if (contentUpdate) {
-        const nextLake = this.proposedLake(current, payload);
-        const saved = await this.client.updateDocLake(ownerId, {
-          docId: current.id,
-          draftVersion: current.version,
-          lakeContent: nextLake,
-          referer: `${payload.docUrl.replace(/\/$/, "")}/edit`,
-        });
-        expectedBodyHtml = saved.bodyHtml;
-        contentWritten = true;
-        await this.client.publishDoc(ownerId, {
-          docId: current.id,
-          referer: `${payload.docUrl.replace(/\/$/, "")}/edit`,
-        });
-      }
-      if (titleUpdate && payload.newTitle) {
-        await this.client.renameDoc(ownerId, {
-          docId: current.id,
-          title: payload.newTitle,
-          referer: `${payload.docUrl.replace(/\/$/, "")}/edit`,
-        });
-      }
-    } catch (error) {
-      if (contentWritten) throw new PartialWriteError();
-      throw error;
-    }
+        const contentUpdate = payload.mode !== "rename";
+        const titleUpdate =
+          Boolean(payload.newTitle) && payload.newTitle !== current.title;
+        if (contentUpdate) this.client.assertDocContentUpdateEnabled(docUrl);
+        if (titleUpdate) this.client.assertDocRenameEnabled(docUrl);
 
-    const verified = await this.client.getDoc(ownerId, payload.docUrl);
-    if (contentUpdate) {
-      const expectedLake = this.proposedLake(current, payload);
-      if (verified.lakeContent !== expectedLake) {
-        throw new Error(
-          "Yuque accepted the update but native Lake read-back did not match",
-        );
-      }
-      const nativeVerified = await this.client.getDocEditorDraft(
-        ownerId,
-        payload.docUrl,
-      );
-      if (
-        nativeVerified.publishedAsl !== expectedLake ||
-        nativeVerified.draftAsl !== expectedLake ||
-        nativeVerified.publishedHtml !== expectedBodyHtml ||
-        nativeVerified.draftHtml !== expectedBodyHtml
-      ) {
-        throw new Error(
-          "Yuque accepted the update but native ASL/HTML read-back did not match",
-        );
-      }
-    }
-    if (titleUpdate && verified.title !== payload.newTitle) {
-      throw new Error(
-        "Yuque accepted the update but title read-back did not match",
-      );
-    }
-    return {
-      state: "succeeded",
-      result: {
-        status: payload.kind === "restore_snapshot" ? "restored" : "updated",
-        display_path: verified.location.displayPath,
-        doc_url: payload.docUrl,
-        version: verified.version,
-        fingerprint: verified.fingerprint,
+        this.createDocSnapshot(current);
+        let contentWritten = false;
+        let expectedBodyHtml: string | undefined;
+        let reconciledAfterUnknownResponse = false;
+        try {
+          if (contentUpdate) {
+            const nextLake = this.proposedLake(current, payload);
+            const saved = await this.client.updateDocLake(ownerId, {
+              docId: current.id,
+              draftVersion: current.version,
+              lakeContent: nextLake,
+              referer: `${docUrl.replace(/\/$/, "")}/edit`,
+            });
+            expectedBodyHtml = saved.bodyHtml;
+            reconciledAfterUnknownResponse ||=
+              saved.reconciledAfterUnknownResponse === true;
+            contentWritten = true;
+            try {
+              await this.client.publishDoc(ownerId, {
+                docId: current.id,
+                referer: `${docUrl.replace(/\/$/, "")}/edit`,
+              });
+            } catch (error) {
+              if (!isUncertainWriteError(error)) throw error;
+              const published = await this.client
+                .getDocEditorDraft(ownerId, docUrl)
+                .catch(() => undefined);
+              if (
+                !published ||
+                published.publishedAsl !== nextLake ||
+                published.publishedHtml !== expectedBodyHtml
+              ) {
+                throw error;
+              }
+              reconciledAfterUnknownResponse = true;
+            }
+          }
+          if (titleUpdate && payload.newTitle) {
+            try {
+              await this.client.renameDoc(ownerId, {
+                docId: current.id,
+                title: payload.newTitle,
+                referer: `${docUrl.replace(/\/$/, "")}/edit`,
+              });
+            } catch (error) {
+              if (!isUncertainWriteError(error)) throw error;
+              const renamed = await this.client
+                .getDoc(ownerId, docUrl)
+                .catch(() => undefined);
+              if (!renamed || renamed.title !== payload.newTitle) throw error;
+              reconciledAfterUnknownResponse = true;
+            }
+          }
+        } catch (error) {
+          if (contentWritten) throw new PartialWriteError();
+          throw error;
+        }
+
+        const verified = await this.client.getDoc(ownerId, docUrl);
+        if (contentUpdate) {
+          const expectedLake = this.proposedLake(current, payload);
+          if (verified.lakeContent !== expectedLake) {
+            throw new Error(
+              "Yuque accepted the update but native Lake read-back did not match",
+            );
+          }
+          const nativeVerified = await this.client.getDocEditorDraft(
+            ownerId,
+            docUrl,
+          );
+          if (
+            nativeVerified.publishedAsl !== expectedLake ||
+            nativeVerified.draftAsl !== expectedLake ||
+            nativeVerified.publishedHtml !== expectedBodyHtml ||
+            nativeVerified.draftHtml !== expectedBodyHtml
+          ) {
+            throw new Error(
+              "Yuque accepted the update but native ASL/HTML read-back did not match",
+            );
+          }
+        }
+        if (titleUpdate && verified.title !== payload.newTitle) {
+          throw new Error(
+            "Yuque accepted the update but title read-back did not match",
+          );
+        }
+        return {
+          state: "succeeded",
+          result: {
+            status:
+              payload.kind === "restore_snapshot" ||
+              payload.kind === "restore_doc_version"
+                ? "restored"
+                : "updated",
+            display_path: verified.location.displayPath,
+            doc_url: docUrl,
+            version: verified.version,
+            fingerprint: verified.fingerprint,
+            reconciled_after_unknown_response: reconciledAfterUnknownResponse,
+          },
+        };
       },
-    };
+    );
   }
 
   private async executeSheetUpdate(
@@ -986,7 +1642,7 @@ export class ChangeStore {
     ) {
       throw new Error("Stored Sheet update is incomplete");
     }
-    const current = await this.client.getSheet(ownerId, payload.docUrl);
+    let current = await this.client.getSheet(ownerId, payload.docUrl);
     const currentTarget = sheetOperationTargetFingerprint(
       current.workbook,
       payload.sheetOperations,
@@ -1012,43 +1668,269 @@ export class ChangeStore {
       );
     }
     this.client.assertSheetUpdateEnabled(payload.docUrl);
-    const applied = applySheetOperations(
-      current.workbook,
-      payload.sheetOperations,
+    return this.withVerifiedResourceLock(
+      ownerId,
+      {
+        docId: current.id,
+        docUrl: payload.docUrl,
+        expectedVersion: current.version,
+      },
+      async () => {
+        current = await this.client.getSheet(ownerId, payload.docUrl!);
+        const lockedTarget = sheetOperationTargetFingerprint(
+          current.workbook,
+          payload.sheetOperations!,
+        );
+        if (current.workbook.fingerprint !== payload.baseWorkbookFingerprint) {
+          if (lockedTarget === payload.baseTargetFingerprint) {
+            const preview = await this.previewUpdateSheet(ownerId, {
+              docUrl: payload.docUrl!,
+              operations: payload.sheetOperations!,
+            });
+            return {
+              state: "conflict",
+              result: {
+                status: "repreview_required",
+                reason:
+                  "The workbook changed outside the targeted cells after lock acquisition; no write occurred. Review and confirm the new preview.",
+                preview,
+              },
+            };
+          }
+          throw new ConflictError(
+            "The targeted cells or worksheet structure changed after lock acquisition; no write occurred.",
+          );
+        }
+
+        const applied = applySheetOperations(
+          current.workbook,
+          payload.sheetOperations!,
+        );
+        const encoded = encodeLakeSheetDraft({
+          id: current.id,
+          title: current.title,
+          draftVersion: current.version,
+          bodyDraft: current.bodyDraft,
+          workbook: applied.workbook,
+        });
+        const expectedFingerprint = workbookContentFingerprint(
+          encoded.workbook,
+        );
+        this.createSheetSnapshot(current);
+        let reconciledAfterUnknownResponse = false;
+        let verified: NormalizedSheetDocument | undefined;
+        try {
+          await this.client.updateSheetDraft(ownerId, {
+            docId: current.id,
+            draftVersion: current.version,
+            bodyDraft: encoded.bodyDraft,
+            referer: `${payload.docUrl!.replace(/\/$/, "")}/edit`,
+          });
+        } catch (error) {
+          if (!isUncertainWriteError(error)) throw error;
+          verified = await this.client
+            .getSheet(ownerId, payload.docUrl!)
+            .catch(() => undefined);
+          if (
+            !verified ||
+            workbookContentFingerprint(verified.workbook) !==
+              expectedFingerprint
+          ) {
+            throw error;
+          }
+          reconciledAfterUnknownResponse = true;
+        }
+        verified ??= await this.client.getSheet(ownerId, payload.docUrl!);
+        if (
+          workbookContentFingerprint(verified.workbook) !== expectedFingerprint
+        ) {
+          throw new Error(
+            "Yuque accepted the Sheet update but cell read-back did not match",
+          );
+        }
+        return {
+          state: "succeeded",
+          result: {
+            status: "updated",
+            display_path: verified.location.displayPath,
+            doc_url: payload.docUrl!,
+            version: verified.version,
+            fingerprint: verified.workbook.fingerprint,
+            reconciled_after_unknown_response: reconciledAfterUnknownResponse,
+          },
+        };
+      },
     );
-    const encoded = encodeLakeSheetDraft({
-      id: current.id,
-      title: current.title,
-      draftVersion: current.version,
-      bodyDraft: current.bodyDraft,
-      workbook: applied.workbook,
-    });
-    this.createSheetSnapshot(current);
-    await this.client.updateSheetDraft(ownerId, {
-      docId: current.id,
-      draftVersion: current.version,
-      bodyDraft: encoded.bodyDraft,
-      referer: `${payload.docUrl.replace(/\/$/, "")}/edit`,
-    });
-    const verified = await this.client.getSheet(ownerId, payload.docUrl);
+  }
+
+  private async executeSheetSnapshotRestore(
+    ownerId: string,
+    payload: PendingChangePayload,
+  ): Promise<ExecutionResult> {
     if (
-      workbookContentFingerprint(verified.workbook) !==
-      workbookContentFingerprint(encoded.workbook)
+      !payload.docUrl ||
+      !payload.sheetDraft ||
+      !payload.baseWorkbookFingerprint
     ) {
-      throw new Error(
-        "Yuque accepted the Sheet update but cell read-back did not match",
+      throw new Error("Stored Sheet snapshot restoration is incomplete");
+    }
+    let current = await this.client.getSheet(ownerId, payload.docUrl);
+    if (current.workbook.fingerprint !== payload.baseWorkbookFingerprint) {
+      throw new ConflictError(
+        "The workbook changed after the snapshot restoration Preview; no write occurred.",
       );
     }
-    return {
-      state: "succeeded",
-      result: {
-        status: "updated",
-        display_path: verified.location.displayPath,
-        doc_url: payload.docUrl,
-        version: verified.version,
-        fingerprint: verified.workbook.fingerprint,
+    this.client.assertSheetUpdateEnabled(payload.docUrl);
+    return this.withVerifiedResourceLock(
+      ownerId,
+      {
+        docId: current.id,
+        docUrl: payload.docUrl,
+        expectedVersion: current.version,
       },
-    };
+      async () => {
+        current = await this.client.getSheet(ownerId, payload.docUrl!);
+        if (current.workbook.fingerprint !== payload.baseWorkbookFingerprint) {
+          throw new ConflictError(
+            "The workbook changed after lock acquisition; no snapshot restoration was written.",
+          );
+        }
+        const restored = decodeLakeSheetDraft({
+          id: current.id,
+          title: current.title,
+          draftVersion: current.version,
+          bodyDraft: payload.sheetDraft!,
+        });
+        const expectedFingerprint = workbookContentFingerprint(
+          restored.workbook,
+        );
+        this.createSheetSnapshot(current);
+        let reconciledAfterUnknownResponse = false;
+        let verified: NormalizedSheetDocument | undefined;
+        try {
+          await this.client.updateSheetDraft(ownerId, {
+            docId: current.id,
+            draftVersion: current.version,
+            bodyDraft: payload.sheetDraft!,
+            referer: `${payload.docUrl!.replace(/\/$/, "")}/edit`,
+          });
+        } catch (error) {
+          if (!isUncertainWriteError(error)) throw error;
+          verified = await this.client
+            .getSheet(ownerId, payload.docUrl!)
+            .catch(() => undefined);
+          if (
+            !verified ||
+            workbookContentFingerprint(verified.workbook) !==
+              expectedFingerprint
+          ) {
+            throw error;
+          }
+          reconciledAfterUnknownResponse = true;
+        }
+        verified ??= await this.client.getSheet(ownerId, payload.docUrl!);
+        if (
+          workbookContentFingerprint(verified.workbook) !== expectedFingerprint
+        ) {
+          throw new Error(
+            "Yuque accepted the Sheet snapshot restoration but semantic read-back did not match",
+          );
+        }
+        return {
+          state: "succeeded",
+          result: {
+            status: "restored",
+            display_path: verified.location.displayPath,
+            doc_url: payload.docUrl!,
+            version: verified.version,
+            fingerprint: verified.workbook.fingerprint,
+            reconciled_after_unknown_response: reconciledAfterUnknownResponse,
+          },
+        };
+      },
+    );
+  }
+
+  private async withTargetLock<T>(
+    target: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = target.trim();
+    const previous = this.targetLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.targetLocks.set(key, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.targetLocks.get(key) === tail) this.targetLocks.delete(key);
+    }
+  }
+
+  private async withVerifiedResourceLock(
+    ownerId: string,
+    input: { docId: string; docUrl: string; expectedVersion: number },
+    operation: () => Promise<ExecutionResult>,
+  ): Promise<ExecutionResult> {
+    const before = await this.client.getResourceLockState(ownerId, input);
+    if (before.draftVersion !== input.expectedVersion) {
+      throw new ConflictError(
+        "The Yuque draft version changed before lock acquisition; no write occurred.",
+      );
+    }
+    if (before.lockerPresent || before.collaboratorCount > 0) {
+      throw new ConflictError(
+        "The target is locked or has active collaborators; no write occurred.",
+      );
+    }
+
+    let acquired = false;
+    let completed: ExecutionResult | undefined;
+    let operationError: unknown;
+    try {
+      const locked = await this.client.acquireResourceLock(ownerId, input);
+      acquired = true;
+      if (
+        locked.draftVersion !== input.expectedVersion ||
+        !locked.lockerPresent ||
+        locked.ownedByClient !== true ||
+        locked.collaboratorCount > 0
+      ) {
+        throw new ConflictError(
+          "The Yuque lock could not be exclusively verified at the Preview version; no write occurred.",
+        );
+      }
+      completed = await operation();
+      return completed;
+    } catch (error) {
+      operationError = error;
+      throw error;
+    } finally {
+      if (acquired) {
+        try {
+          await this.client.releaseResourceLock(ownerId, input);
+        } catch {
+          if (
+            operationError === undefined &&
+            completed?.state === "succeeded"
+          ) {
+            throw new PartialWriteError(
+              "The content result is known, but the temporary Yuque lock could not be released or reconciled",
+            );
+          }
+          if (operationError === undefined) {
+            throw new ConflictError(
+              "No content write was completed, but temporary lock release could not be verified",
+            );
+          }
+        }
+      }
+    }
   }
 
   private async rebasePreview(
@@ -1217,7 +2099,7 @@ export class ChangeStore {
     return { row, payload };
   }
 
-  private createDocSnapshot(doc: NormalizedDoc): void {
+  private createDocSnapshot(doc: NormalizedDoc): string {
     const snapshotId = randomUUID();
     const createdAt = new Date();
     const payload: SnapshotPayload = {
@@ -1255,9 +2137,10 @@ export class ChangeStore {
       error_code: null,
       created_at: createdAt.toISOString(),
     });
+    return snapshotId;
   }
 
-  private createSheetSnapshot(sheet: NormalizedSheetDocument): void {
+  private createSheetSnapshot(sheet: NormalizedSheetDocument): string {
     const snapshotId = randomUUID();
     const createdAt = new Date();
     const payload: SnapshotPayload = {
@@ -1294,6 +2177,7 @@ export class ChangeStore {
       error_code: null,
       created_at: createdAt.toISOString(),
     });
+    return snapshotId;
   }
 
   private loadSnapshot(snapshotId: string): SnapshotPayload {
@@ -1334,8 +2218,8 @@ class ConflictError extends Error {
 }
 
 class PartialWriteError extends Error {
-  constructor() {
-    super("A later write step failed after content was written");
+  constructor(message = "A later write step failed after content was written") {
+    super(message);
     this.name = "PartialWriteError";
   }
 }
@@ -1497,6 +2381,36 @@ function workbookContentFingerprint(workbook: NormalizedWorkbook): string {
   });
 }
 
+function sheetSnapshotPreviewText(workbook: NormalizedWorkbook): string {
+  return JSON.stringify(
+    {
+      worksheets: workbook.worksheets.map((worksheet) => ({
+        id: worksheet.id,
+        name: worksheet.name,
+        row_count: worksheet.rowCount,
+        column_count: worksheet.columnCount,
+        cells: Object.fromEntries(
+          Object.entries(worksheet.cells)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([address, cell]) => [
+              address,
+              {
+                value: cell.value,
+                ...(cell.formula ? { formula: cell.formula } : {}),
+                ...(cell.style ? { style: cell.style } : {}),
+                ...(cell.kind ? { kind: cell.kind } : {}),
+                ...(cell.unsupported ? { unsupported: true } : {}),
+              },
+            ]),
+        ),
+      })),
+      opaque_structure_fingerprint: workbook.opaqueStructureFingerprint,
+    },
+    null,
+    2,
+  );
+}
+
 function diffStats(diff: string): PreviewResult["stats"] {
   let added = 0;
   let removed = 0;
@@ -1551,7 +2465,9 @@ function isUncertainWriteError(error: unknown): boolean {
   return (
     error.name === "AbortError" ||
     error instanceof TypeError ||
-    /timeout|timed out|fetch failed|network/i.test(error.message)
+    /timeout|timed out|fetch failed|network|result is unknown/i.test(
+      error.message,
+    )
   );
 }
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yuque Workspace"
+  short_description: "Safely locate, read, and change Yuque workspaces"
+  default_prompt: "Use $yuque-workspace to locate a Yuque document by full path and prepare a safe change preview."

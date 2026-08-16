@@ -12,7 +12,7 @@ describe("Capability Registry", () => {
     expect(capabilityToolNames()).toEqual(
       toolDefinitions.map((tool) => tool.name),
     );
-    expect(capabilityToolNames()).toHaveLength(30);
+    expect(capabilityToolNames()).toHaveLength(36);
   });
 
   it("reports strict mode without exposing configured secrets or hosts", () => {
@@ -21,7 +21,7 @@ describe("Capability Registry", () => {
       report.capabilities as Array<Record<string, unknown>>
     ).find((entry) => entry.tool === "yuque_confirm_change");
     expect(report).toMatchObject({
-      server_version: "0.3.3",
+      server_version: "1.0.0",
       contract_version: "fixture-contract",
       write_consistency_mode: "strict",
       safeguards: {
@@ -43,6 +43,14 @@ describe("Capability Registry", () => {
       hostTypes: ["personal"],
       required_write_mode: "none",
     });
+    const deleteDoc = (
+      report.capabilities as Array<Record<string, unknown>>
+    ).find((entry) => entry.tool === "yuque_preview_delete_doc");
+    expect(deleteDoc).toMatchObject({
+      availability: "disabled",
+      hostTypes: ["personal"],
+      reasonCode: "object_deletion_disabled",
+    });
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain("secret-token");
     expect(serialized).not.toContain("company.invalid");
@@ -59,6 +67,40 @@ describe("Capability Registry", () => {
       required_write_mode: "best_effort",
     });
     expect(confirm).not.toHaveProperty("reasonCode");
+  });
+
+  it("lets the deployment kill switch override best_effort", () => {
+    const disabled = config("best_effort");
+    disabled.writeKillSwitch = true;
+    const report = buildCapabilityReport(disabled, contracts());
+    const confirm = (
+      report.capabilities as Array<Record<string, unknown>>
+    ).find((entry) => entry.tool === "yuque_confirm_change");
+    expect(confirm).toMatchObject({
+      availability: "disabled",
+      required_write_mode: "best_effort",
+      reasonCode: "write_kill_switch_active",
+    });
+  });
+
+  it("exposes typed object-deletion Preview only after its explicit switch", () => {
+    const enabledConfig = config("best_effort");
+    enabledConfig.allowObjectDeletion = true;
+    const report = buildCapabilityReport(enabledConfig, contracts());
+    for (const tool of [
+      "yuque_preview_delete_doc",
+      "yuque_preview_delete_sheet",
+      "yuque_preview_delete_book",
+    ]) {
+      const entry = (
+        report.capabilities as Array<Record<string, unknown>>
+      ).find((capability) => capability.tool === tool);
+      expect(entry).toMatchObject({
+        availability: "available",
+        hostTypes: ["personal"],
+      });
+      expect(entry).not.toHaveProperty("reasonCode");
+    }
   });
 });
 

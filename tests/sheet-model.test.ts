@@ -289,6 +289,69 @@ describe("safe Sheet model", () => {
     expect(first).not.toBe(second);
   });
 
+  it("keeps normalized basic styles valid across Preview and apply validation", () => {
+    const input = [
+      {
+        op: "set_range",
+        worksheet_id: "sheet-1",
+        range: "A1:A1",
+        cells: [
+          [
+            {
+              value: 12.5,
+              style: {
+                number_format: "number:2",
+                bold: true,
+                italic: true,
+                text_color: "#336699",
+                fill_color: "#fff2cc",
+                horizontal_align: "center",
+              },
+            },
+          ],
+        ],
+      },
+    ];
+    const normalized = validateSheetOperations(input);
+    expect(() => validateSheetOperations(normalized)).not.toThrow();
+    const applied = applySheetOperations(
+      {
+        id: "book-1",
+        title: "Sheet",
+        revision: "1",
+        fingerprint: "base",
+        worksheets: [
+          {
+            id: "sheet-1",
+            name: "Sheet1",
+            rowCount: 200,
+            columnCount: 26,
+            cells: {},
+          },
+        ],
+      },
+      normalized,
+    );
+    expect(applied.workbook.worksheets[0]?.cells.A1?.style).toEqual({
+      numberFormat: "number:2",
+      bold: true,
+      italic: true,
+      textColor: "#336699",
+      fillColor: "#fff2cc",
+      horizontalAlign: "center",
+    });
+    expect(() =>
+      validateSheetOperations([
+        {
+          op: "set_range",
+          worksheet_id: "sheet-1",
+          range: "A1:A1",
+          cells: [[{ value: 1, style: { number_format: "0.00" } }]],
+        },
+      ]),
+    ).toThrow("verified number");
+  });
+
   it("calculates only the verified common formula subset and ignores supplied cached values", () => {
     const applied = applySheetOperations(
       {

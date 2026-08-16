@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ChangeState, PendingChangeKind } from "./types.js";
+import type { CryptoBox } from "./crypto.js";
 
 export interface PendingChangeRow {
   change_id: string;
@@ -114,6 +115,79 @@ export class AppDatabase {
     this.db.close();
   }
 
+  readiness(): {
+    quickCheck: boolean;
+    executingChanges: number;
+    unknownChanges: number;
+  } {
+    const quick = this.db.pragma("quick_check", { simple: true });
+    const states = this.db
+      .prepare(
+        `SELECT state, COUNT(*) AS count FROM pending_changes
+         WHERE state IN ('executing', 'unknown') GROUP BY state`,
+      )
+      .all() as Array<{ state: string; count: number }>;
+    const count = (state: string) =>
+      states.find((entry) => entry.state === state)?.count ?? 0;
+    return {
+      quickCheck: quick === "ok",
+      executingChanges: count("executing"),
+      unknownChanges: count("unknown"),
+    };
+  }
+
+  async backup(path: string): Promise<void> {
+    await this.db.backup(path);
+  }
+
+  rotateEncryptionKey(
+    oldCrypto: CryptoBox,
+    newCrypto: CryptoBox,
+    ownerId: string,
+  ): { pendingChanges: number; snapshots: number } {
+    const pending = this.db
+      .prepare("SELECT change_id, encrypted_payload FROM pending_changes")
+      .all() as Array<{ change_id: string; encrypted_payload: string }>;
+    const snapshots = this.db
+      .prepare("SELECT snapshot_id, encrypted_payload FROM snapshots")
+      .all() as Array<{ snapshot_id: string; encrypted_payload: string }>;
+    const rotatedPending = pending.map((row) => ({
+      id: row.change_id,
+      payload: newCrypto.encrypt(
+        oldCrypto.decrypt(
+          row.encrypted_payload,
+          `yuque-change:${ownerId}:${row.change_id}`,
+        ),
+        `yuque-change:${ownerId}:${row.change_id}`,
+      ),
+    }));
+    const rotatedSnapshots = snapshots.map((row) => ({
+      id: row.snapshot_id,
+      payload: newCrypto.encrypt(
+        oldCrypto.decrypt(
+          row.encrypted_payload,
+          `yuque-snapshot:${ownerId}:${row.snapshot_id}`,
+        ),
+        `yuque-snapshot:${ownerId}:${row.snapshot_id}`,
+      ),
+    }));
+    const updatePending = this.db.prepare(
+      "UPDATE pending_changes SET encrypted_payload = ? WHERE change_id = ?",
+    );
+    const updateSnapshot = this.db.prepare(
+      "UPDATE snapshots SET encrypted_payload = ? WHERE snapshot_id = ?",
+    );
+    this.db.transaction(() => {
+      for (const row of rotatedPending) updatePending.run(row.payload, row.id);
+      for (const row of rotatedSnapshots)
+        updateSnapshot.run(row.payload, row.id);
+    })();
+    return {
+      pendingChanges: rotatedPending.length,
+      snapshots: rotatedSnapshots.length,
+    };
+  }
+
   insertPendingChange(row: PendingChangeRow): void {
     this.db
       .prepare(
@@ -163,6 +237,27 @@ export class AppDatabase {
       )
       .run(to, now, errorCode ?? null, to, now, changeId, ...from);
     return result.changes === 1;
+  }
+
+  markInterruptedChangesUnknown(): PendingChangeRow[] {
+    const rows = this.db
+      .prepare("SELECT * FROM pending_changes WHERE state = 'executing'")
+      .all() as PendingChangeRow[];
+    if (rows.length === 0) return [];
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE pending_changes
+         SET state = 'unknown', updated_at = ?, error_code = 'process_interrupted'
+         WHERE state = 'executing'`,
+      )
+      .run(now);
+    return rows.map((row) => ({
+      ...row,
+      state: "unknown",
+      updated_at: now,
+      error_code: "process_interrupted",
+    }));
   }
 
   cancelPendingChange(changeId: string): boolean {

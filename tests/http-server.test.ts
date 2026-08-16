@@ -19,6 +19,23 @@ describe("Streamable HTTP single-owner boundary", () => {
 
     try {
       await once(server, "listening");
+      const health = await fetch(`http://127.0.0.1:${port}/healthz`, {
+        headers: { "X-Request-Id": "test-request-123" },
+      });
+      expect(health.status).toBe(200);
+      expect(health.headers.get("x-request-id")).toBe("test-request-123");
+      expect((await fetch(`http://127.0.0.1:${port}/readyz`)).status).toBe(200);
+      const metricsWithoutToken = await fetch(
+        `http://127.0.0.1:${port}/metrics`,
+      );
+      expect(metricsWithoutToken.status).toBe(401);
+      const metrics = await fetch(`http://127.0.0.1:${port}/metrics`, {
+        headers: { Authorization: `Bearer ${config.mcpBearerToken}` },
+      });
+      expect(metrics.status).toBe(200);
+      const metricsText = await metrics.text();
+      expect(metricsText).toContain("yuque_web_mcp_active_sessions");
+      expect(metricsText).not.toContain(config.mcpBearerToken);
       const mcpUrl = `http://127.0.0.1:${port}/mcp`;
       const unauthorized = await fetch(mcpUrl, {
         method: "POST",
@@ -42,7 +59,7 @@ describe("Streamable HTTP single-owner boundary", () => {
         params: {},
       });
       expect(tools.response.status).toBe(200);
-      expect(tools.payload.result?.tools).toHaveLength(30);
+      expect(tools.payload.result?.tools).toHaveLength(36);
 
       const invalidSessionToken = await rpc(mcpUrl, "invalid", sessionA, {
         jsonrpc: "2.0",
@@ -168,6 +185,54 @@ describe("Streamable HTTP single-owner boundary", () => {
       expect(extraPath.status).toBe(404);
     } finally {
       await new Promise<void>((done) => server.close(() => done()));
+      app.db.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when an initialize body exceeds the configured limit", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "yuque-body-http-test-"));
+    const port = await availablePort();
+    const config = { ...testConfig(dataDir, port), maxRequestBodyBytes: 32 };
+    const app = await createApplication(config);
+    const { server } = startHttpServer(app);
+    try {
+      await once(server, "listening");
+      const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: mcpHeaders(config.mcpBearerToken),
+        body: JSON.stringify({ value: "x".repeat(128) }),
+      });
+      expect(response.status).toBe(413);
+      expect(await response.text()).not.toContain("x".repeat(32));
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      app.db.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears the fallback timer after a prompt graceful shutdown", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "yuque-shutdown-test-"));
+    const port = await availablePort();
+    const config = {
+      ...testConfig(dataDir, port),
+      gracefulShutdownSeconds: 2,
+    };
+    const app = await createApplication(config);
+    const { server, shutdown } = startHttpServer(app);
+    try {
+      await once(server, "listening");
+      await initialize(
+        `http://127.0.0.1:${port}/mcp`,
+        config.mcpBearerToken,
+        1,
+      );
+      const startedAt = performance.now();
+      const result = await shutdown();
+      expect(result.writesDrained).toBe(true);
+      expect(performance.now() - startedAt).toBeLessThan(500);
+    } finally {
       app.db.close();
       await rm(dataDir, { recursive: true, force: true });
     }

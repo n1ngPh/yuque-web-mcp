@@ -10,7 +10,11 @@ import { CryptoBox, fingerprint } from "../src/crypto.js";
 import { ChangeStore } from "../src/change-store.js";
 import { decodeLakeSheetDraft } from "../src/sheet-codec.js";
 import type { AppConfig } from "../src/config.js";
-import type { NormalizedDoc, YuqueWebClient } from "../src/yuque-client.js";
+import type {
+  NormalizedDoc,
+  NormalizedSheetDocument,
+  YuqueWebClient,
+} from "../src/yuque-client.js";
 
 const temporaryDirectories: string[] = [];
 const DOC_URL = "https://example-team.yuque.com/team/book/doc";
@@ -24,6 +28,36 @@ afterEach(async () => {
 });
 
 describe("single-owner safe change store", () => {
+  it("marks an interrupted executing change unknown on startup", async () => {
+    const fixture = await createFixture();
+    const now = new Date().toISOString();
+    fixture.db.insertPendingChange({
+      change_id: "interrupted-change",
+      kind: "update_doc",
+      encrypted_payload: "not-read-during-reconciliation",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      consumed_at: now,
+      created_at: now,
+      updated_at: now,
+      state: "executing",
+      diff_digest: "digest",
+      has_deletions: 0,
+      target_hash: "target",
+      error_code: null,
+    });
+    new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      {} as YuqueWebClient,
+    );
+    expect(fixture.db.getPendingChange("interrupted-change")).toMatchObject({
+      state: "unknown",
+      error_code: "process_interrupted",
+    });
+    fixture.db.close();
+  });
+
   it("previews and confirms a verified private personal knowledge base once", async () => {
     const fixture = await createFixture();
     let writes = 0;
@@ -71,6 +105,7 @@ describe("single-owner safe change store", () => {
         "employee.a",
         preview.change_token,
         preview.diff_digest,
+        true,
       ),
     ).resolves.toMatchObject({
       status: "created",
@@ -83,6 +118,7 @@ describe("single-owner safe change store", () => {
         "employee.a",
         preview.change_token,
         preview.diff_digest,
+        true,
       ),
     ).rejects.toThrow("succeeded");
     fixture.db.close();
@@ -555,6 +591,7 @@ describe("single-owner safe change store", () => {
         "employee.a",
         preview.change_token,
         preview.diff_digest,
+        true,
       ),
     ).rejects.toThrow("Chart Confirm is disabled");
     expect(writes).toBe(0);
@@ -610,6 +647,456 @@ describe("single-owner safe change store", () => {
     ).rejects.toThrow("verified only for the personal Yuque Host");
     fixture.db.close();
   });
+
+  it("fails closed before writing when a remote lock or collaborator is present", async () => {
+    const fixture = await createFixture();
+    const current = doc('<p data-lake-id="a">body</p>', "body");
+    let writes = 0;
+    const client = docClient(
+      () => current,
+      () => {
+        writes += 1;
+      },
+    );
+    client.getResourceLockState = async () => ({
+      draftVersion: current.version,
+      lockerPresent: true,
+      collaboratorCount: 1,
+      ownedByClient: false,
+    });
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const preview = await changes.previewUpdate("employee.a", {
+      docUrl: DOC_URL,
+      mode: "append",
+      newMarkdown: "blocked",
+    });
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+        true,
+      ),
+    ).rejects.toThrow("locked or has active collaborators");
+    expect(writes).toBe(0);
+    expect(fixture.db.getPendingChange(preview.change_token)?.state).toBe(
+      "conflict",
+    );
+    fixture.db.close();
+  });
+
+  it("rechecks the document baseline after acquiring the remote lock", async () => {
+    const fixture = await createFixture();
+    const baseline = doc('<p data-lake-id="a">body</p>', "body");
+    const changed = {
+      ...doc('<p data-lake-id="a">body</p>', "body", 2),
+      title: "changed-by-peer",
+    };
+    changed.fingerprint = fingerprint({
+      lakeContent: changed.lakeContent,
+      version: changed.version,
+      title: changed.title,
+    });
+    let reads = 0;
+    let writes = 0;
+    const client = docClient(
+      () => {
+        reads += 1;
+        return reads >= 3 ? changed : baseline;
+      },
+      undefined,
+      () => {
+        writes += 1;
+      },
+    );
+    client.getResourceLockState = async () => ({
+      draftVersion: baseline.version,
+      lockerPresent: false,
+      collaboratorCount: 0,
+    });
+    client.acquireResourceLock = async () => ({
+      draftVersion: baseline.version,
+      lockerPresent: true,
+      collaboratorCount: 0,
+      ownedByClient: true,
+    });
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const preview = await changes.previewUpdate("employee.a", {
+      docUrl: DOC_URL,
+      mode: "rename",
+      newTitle: "proposed-title",
+    });
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+        true,
+      ),
+    ).rejects.toThrow("after lock acquisition");
+    expect(writes).toBe(0);
+    expect(fixture.db.getPendingChange(preview.change_token)?.state).toBe(
+      "conflict",
+    );
+    fixture.db.close();
+  });
+
+  it("serializes concurrent confirms for the same target and writes only the first baseline", async () => {
+    const fixture = await createFixture();
+    let current = doc('<p data-lake-id="a">body</p>', "body");
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let writes = 0;
+    let activeWrites = 0;
+    let maximumActiveWrites = 0;
+    const client = docClient(() => current);
+    client.updateDocLake = async (_owner, input) => {
+      writes += 1;
+      activeWrites += 1;
+      maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
+      await writeGate;
+      current = doc(input.lakeContent, "body\nnext", current.version + 1);
+      activeWrites -= 1;
+      return {
+        response: {},
+        bodyHtml: "<!doctype html><p>generated</p>",
+        reconciledAfterUnknownResponse: false,
+      };
+    };
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const first = await changes.previewUpdate("employee.a", {
+      docUrl: DOC_URL,
+      mode: "append",
+      newMarkdown: "next",
+    });
+    const second = await changes.previewUpdate("employee.a", {
+      docUrl: DOC_URL,
+      mode: "append",
+      newMarkdown: "next",
+    });
+    const firstConfirm = changes.confirmChange(
+      "employee.a",
+      first.change_token,
+      first.diff_digest,
+      true,
+    );
+    const secondConfirm = changes.confirmChange(
+      "employee.a",
+      second.change_token,
+      second.diff_digest,
+      true,
+    );
+    await Promise.resolve();
+    releaseWrite();
+    await expect(firstConfirm).resolves.toMatchObject({ status: "updated" });
+    await expect(secondConfirm).rejects.toThrow(
+      "target title or content region changed after preview",
+    );
+    expect(writes).toBe(1);
+    expect(maximumActiveWrites).toBe(1);
+    expect(fixture.db.getPendingChange(second.change_token)?.state).toBe(
+      "conflict",
+    );
+    fixture.db.close();
+  });
+
+  it("reconciles Doc publish and title timeouts by read-back without retrying writes", async () => {
+    const fixture = await createFixture();
+    let current = doc('<p data-lake-id="a">body</p>', "body");
+    let publishAttempts = 0;
+    let renameAttempts = 0;
+    const client = docClient(
+      () => current,
+      (lake) => {
+        current = doc(lake, "body\nnext", current.version + 1);
+      },
+      (title) => {
+        renameAttempts += 1;
+        current = { ...current, title };
+        current.fingerprint = fingerprint({
+          lakeContent: current.lakeContent,
+          version: current.version,
+          title,
+        });
+      },
+    );
+    client.publishDoc = async () => {
+      publishAttempts += 1;
+      throw new TypeError("fetch failed after publish");
+    };
+    client.renameDoc = async (_owner, input) => {
+      renameAttempts += 1;
+      current = { ...current, title: input.title };
+      current.fingerprint = fingerprint({
+        lakeContent: current.lakeContent,
+        version: current.version,
+        title: input.title,
+      });
+      throw new TypeError("fetch failed after rename");
+    };
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const preview = await changes.previewUpdate("employee.a", {
+      docUrl: DOC_URL,
+      mode: "append",
+      newMarkdown: "next",
+      newTitle: "renamed-after-timeout",
+    });
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+        true,
+      ),
+    ).resolves.toMatchObject({
+      status: "updated",
+      reconciled_after_unknown_response: true,
+    });
+    expect(publishAttempts).toBe(1);
+    expect(renameAttempts).toBe(1);
+    fixture.db.close();
+  });
+
+  it("reconciles an uncertain Sheet save by semantic read-back", async () => {
+    const fixture = await createFixture();
+    const docUrl = "https://www.yuque.com/u/test/sheet";
+    let current = sheetDocument(docUrl, personalChartDraft());
+    let attempts = 0;
+    const client = sheetClient(
+      () => current,
+      async (bodyDraft) => {
+        attempts += 1;
+        current = sheetDocument(docUrl, bodyDraft, current.version + 1);
+        throw new TypeError("network timeout after Sheet save");
+      },
+    );
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const preview = await changes.previewUpdateSheet("employee.a", {
+      docUrl,
+      operations: [
+        {
+          op: "set_range",
+          worksheet_id: "0",
+          range: "C1:C1",
+          cells: [[{ value: "timeout-probe" }]],
+        },
+      ],
+    });
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+        true,
+      ),
+    ).resolves.toMatchObject({
+      status: "updated",
+      reconciled_after_unknown_response: true,
+    });
+    expect(attempts).toBe(1);
+    expect(current.workbook.worksheets[0]?.cells.C1?.value).toBe(
+      "timeout-probe",
+    );
+    fixture.db.close();
+  });
+
+  it("restores an encrypted Sheet snapshot through the same lock and read-back path", async () => {
+    const fixture = await createFixture();
+    const docUrl = "https://www.yuque.com/u/test/sheet";
+    const originalDraft = personalChartDraft();
+    let current = sheetDocument(docUrl, originalDraft);
+    let attempts = 0;
+    const client = sheetClient(
+      () => current,
+      async (bodyDraft) => {
+        attempts += 1;
+        current = sheetDocument(docUrl, bodyDraft, current.version + 1);
+      },
+    );
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const update = await changes.previewUpdateSheet("employee.a", {
+      docUrl,
+      operations: [
+        {
+          op: "set_range",
+          worksheet_id: "0",
+          range: "C1:C1",
+          cells: [[{ value: "restore-probe" }]],
+        },
+      ],
+    });
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        update.change_token,
+        update.diff_digest,
+        true,
+      ),
+    ).resolves.toMatchObject({ status: "updated" });
+    expect(current.workbook.worksheets[0]?.cells.C1?.value).toBe(
+      "restore-probe",
+    );
+    const snapshots = changes.listSnapshots("employee.a", docUrl);
+    expect(snapshots).toHaveLength(1);
+    const restore = await changes.previewRestoreSnapshot(
+      "employee.a",
+      String(snapshots[0]?.snapshot_id),
+    );
+    expect(restore.diff).toContain("restore-probe");
+    expect(restore.requires_deletion_confirmation).toBe(true);
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        restore.change_token,
+        restore.diff_digest,
+        true,
+      ),
+    ).resolves.toMatchObject({ status: "restored" });
+    expect(current.workbook.worksheets[0]?.cells.C1).toBeUndefined();
+    expect(attempts).toBe(2);
+    fixture.db.close();
+  });
+
+  it("restores a verified historical Doc version through the guarded content path", async () => {
+    const fixture = await createFixture();
+    let current = doc(
+      '<meta name="lake"/><p data-lake-id="current">current body</p>',
+      "current body",
+      7,
+    );
+    const historicalLake =
+      '<meta name="lake"/><p data-lake-id="history">historical body</p>';
+    let writes = 0;
+    const client = docClient(
+      () => current,
+      (lake) => {
+        writes += 1;
+        current = doc(lake, "historical body", current.version + 1);
+      },
+    );
+    client.getDocVersion = async () => ({
+      doc: {
+        id: current.id,
+        title: current.title,
+        url: DOC_URL,
+        bookUrl: current.bookUrl,
+        location: current.location,
+      },
+      version: {
+        id: "42",
+        docId: current.id,
+        title: current.title,
+        createdAt: "2026-08-15T00:00:00.000Z",
+        draft: false,
+        authorLogin: "employee.a",
+        docType: "Doc",
+        format: "lake",
+        slug: current.slug,
+        content: historicalLake,
+        contentHtml: "<p>historical body</p>",
+        plainText: "historical body",
+        fingerprint: "historical-version-fingerprint",
+      },
+    });
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const preview = await changes.previewRestoreDocVersion("employee.a", {
+      docUrl: DOC_URL,
+      versionId: "42",
+    });
+    expect(preview.diff).toContain("historical body");
+    expect(fixture.db.getPendingChange(preview.change_token)?.kind).toBe(
+      "restore_doc_version",
+    );
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+        true,
+      ),
+    ).resolves.toMatchObject({ status: "restored" });
+    expect(current.lakeContent).toBe(historicalLake);
+    expect(writes).toBe(1);
+    expect(changes.listSnapshots("employee.a", DOC_URL)).toHaveLength(1);
+    fixture.db.close();
+  });
+
+  it("marks a known write partial when lock release cannot be reconciled", async () => {
+    const fixture = await createFixture();
+    let current = doc('<p data-lake-id="a">body</p>', "body");
+    let writes = 0;
+    const client = docClient(
+      () => current,
+      (lake) => {
+        writes += 1;
+        current = doc(lake, "body\nnext", current.version + 1);
+      },
+    );
+    client.releaseResourceLock = async () => {
+      throw new Error("release failed");
+    };
+    const changes = new ChangeStore(
+      fixture.config,
+      fixture.db,
+      fixture.crypto,
+      client,
+    );
+    const preview = await changes.previewUpdate("employee.a", {
+      docUrl: DOC_URL,
+      mode: "append",
+      newMarkdown: "next",
+    });
+    await expect(
+      changes.confirmChange(
+        "employee.a",
+        preview.change_token,
+        preview.diff_digest,
+        true,
+      ),
+    ).rejects.toThrow("content step succeeded");
+    expect(writes).toBe(1);
+    expect(fixture.db.getPendingChange(preview.change_token)?.state).toBe(
+      "partial",
+    );
+    fixture.db.close();
+  });
 });
 
 async function createFixture(): Promise<{
@@ -660,6 +1147,18 @@ function docClient(
 ): YuqueWebClient {
   return {
     getDoc: async () => read(),
+    getResourceLockState: async () => ({
+      draftVersion: read().version,
+      lockerPresent: false,
+      collaboratorCount: 0,
+    }),
+    acquireResourceLock: async () => ({
+      draftVersion: read().version,
+      lockerPresent: true,
+      collaboratorCount: 0,
+      ownedByClient: true,
+    }),
+    releaseResourceLock: async () => undefined,
     convertMarkdownToLake: async (_owner: string, markdown: string) =>
       `<meta name="lake"/><p data-lake-id="new">${markdown}</p>`,
     assertDocContentUpdateEnabled: () => undefined,
@@ -680,6 +1179,66 @@ function docClient(
     }),
     renameDoc: async (_owner: string, input: { title: string }) => {
       rename?.(input.title);
+      return {};
+    },
+  } as unknown as YuqueWebClient;
+}
+
+function sheetDocument(
+  docUrl: string,
+  bodyDraft: string,
+  version = 86,
+): NormalizedSheetDocument {
+  const decoded = decodeLakeSheetDraft({
+    id: "sheet-test",
+    title: "yuque-web-mcp-sheet",
+    draftVersion: version,
+    bodyDraft,
+  });
+  return {
+    id: "sheet-test",
+    slug: "sheet",
+    title: "yuque-web-mcp-sheet",
+    format: "lakesheet",
+    bookId: 1,
+    bookUrl: "https://www.yuque.com/u/test",
+    version,
+    url: docUrl,
+    location: {
+      path: ["yuque-web-mcp-sheet"],
+      fullPath: ["yuque-web-mcp-e2e", "yuque-web-mcp-sheet"],
+      displayPath: "个人：测试 / yuque-web-mcp-e2e / yuque-web-mcp-sheet",
+      level: 0,
+      order: 0,
+    },
+    workbook: decoded.workbook,
+    bodyDraft,
+    unsupportedFeatures: decoded.unsupportedFeatures,
+    chartSummaries: decoded.chartSummaries,
+  };
+}
+
+function sheetClient(
+  read: () => NormalizedSheetDocument,
+  write: (bodyDraft: string) => Promise<void>,
+): YuqueWebClient {
+  return {
+    getSheet: async () => read(),
+    assertSheetUpdateEnabled: () => undefined,
+    getResourceLockState: async () => ({
+      draftVersion: read().version,
+      lockerPresent: false,
+      collaboratorCount: 0,
+    }),
+    acquireResourceLock: async () => ({
+      draftVersion: read().version,
+      lockerPresent: true,
+      collaboratorCount: 0,
+      ownedByClient: true,
+    }),
+    releaseResourceLock: async () => undefined,
+    updateSheetDraft: async (_owner: string, input: { bodyDraft: string }) => {
+      await write(input.bodyDraft);
       return {};
     },
   } as unknown as YuqueWebClient;

@@ -1,7 +1,8 @@
 {
   "name": "yuque-web-mcp",
-  "version": "0.3.3",
+  "version": "1.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Secure self-hosted MCP server for Yuque web sessions",
   "type": "module",
   "main": "dist/src/index.js",
@@ -15,16 +16,26 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "scan:public": "node deploy/check-public-content.mjs",
+    "validate:version": "node deploy/check-version-sync.mjs",
+    "validate:skill": "node deploy/validate-skill.mjs",
+    "audit:dependencies": "npm audit --audit-level=high",
+    "soak:http": "node deploy/soak-http.mjs",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
-    "check": "npm run format:check && npm run typecheck && npm run test:coverage && npm run build && npm run scan:public",
+    "check": "npm run format:check && npm run validate:version && npm run typecheck && npm run test:coverage && npm run build && npm run validate:skill && npm run scan:public",
     "start": "node dist/src/index.js",
     "admin": "node dist/src/admin.js",
     "local:start": "node deploy/local.mjs serve",
-    "local:admin": "node deploy/local.mjs admin"
+    "local:admin": "node deploy/local.mjs admin",
+    "instance": "node dist/src/instance-admin.js",
+    "create-instance": "node dist/src/instance-admin.js create",
+    "start-instance": "node dist/src/instance-admin.js start",
+    "status-instance": "node dist/src/instance-admin.js status",
+    "backup-instance": "node dist/src/instance-admin.js backup",
+    "upgrade-instance": "node dist/src/instance-admin.js upgrade"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -37,6 +48,7 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "tough-cookie": "6.0.2",
+    "undici": "6.28.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
