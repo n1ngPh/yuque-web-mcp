@@ -2,22 +2,23 @@
 
 ## Tool selection
 
-| Intent | Preferred tools |
-| --- | --- |
-| Check login | `yuque_auth_status`, `yuque_login_begin`, `yuque_login_status` |
-| Discover scope or knowledge base | `yuque_list_scopes`, `yuque_list_books`, `yuque_get_book` |
-| Locate content | `yuque_search`, `yuque_get_toc`, `yuque_list_docs`, `yuque_list_all_docs` |
-| Read Doc or Sheet | `yuque_get_doc`, `yuque_get_sheet` |
-| Create/update knowledge base | `yuque_preview_create_book`, `yuque_preview_update_book` |
-| Change directory | `yuque_preview_change_catalog` |
-| Create/update Doc | `yuque_preview_create_doc`, `yuque_preview_update_doc` |
-| Create/update Sheet | `yuque_preview_create_sheet`, `yuque_preview_update_sheet` |
-| Comments | `yuque_list_comments`, `yuque_preview_change_comment` |
-| Versions | `yuque_list_doc_versions`, `yuque_get_doc_version`, `yuque_preview_restore_doc_version` when available |
-| Collaborators | `yuque_list_book_collaborators`, `yuque_preview_change_book_collaborator` |
-| Delete object | typed `yuque_preview_delete_doc`, `yuque_preview_delete_sheet`, or `yuque_preview_delete_book` |
-| Confirm/cancel | `yuque_confirm_change`, `yuque_cancel_change` |
-| Snapshots | `yuque_list_snapshots`, `yuque_preview_restore_snapshot` |
+| Intent                           | Preferred tools                                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Check login                      | `yuque_auth_status`, `yuque_login_begin`, `yuque_login_status`                                         |
+| Discover scope or knowledge base | `yuque_list_scopes`, `yuque_list_books`, `yuque_get_book`                                              |
+| Locate content                   | `yuque_search`, `yuque_get_toc`, `yuque_list_docs`, `yuque_list_all_docs`                              |
+| Read Doc or Sheet                | `yuque_get_doc`, `yuque_get_sheet`                                                                     |
+| Export a Doc or Sheet            | `yuque_get_export_options`, then `yuque_create_export_link` after format selection                     |
+| Create/update knowledge base     | `yuque_preview_create_book`, `yuque_preview_update_book`                                               |
+| Change directory                 | `yuque_preview_change_catalog`                                                                         |
+| Create/update Doc                | `yuque_preview_create_doc`, `yuque_preview_update_doc`                                                 |
+| Create/update Sheet              | `yuque_preview_create_sheet`, `yuque_preview_update_sheet`                                             |
+| Comments                         | `yuque_list_comments`, `yuque_preview_change_comment`                                                  |
+| Versions                         | `yuque_list_doc_versions`, `yuque_get_doc_version`, `yuque_preview_restore_doc_version` when available |
+| Collaborators                    | `yuque_list_book_collaborators`, `yuque_preview_change_book_collaborator`                              |
+| Delete object                    | typed `yuque_preview_delete_doc`, `yuque_preview_delete_sheet`, or `yuque_preview_delete_book`         |
+| Confirm/cancel                   | `yuque_confirm_change`, `yuque_cancel_change`                                                          |
+| Snapshots                        | `yuque_list_snapshots`, `yuque_preview_restore_snapshot`                                               |
 
 ## Safe update sequence
 

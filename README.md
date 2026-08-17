@@ -13,6 +13,7 @@
 | 自有/受邀知识库、角色、目录和文档位置索引                       | 已验证；共享路径使用`共享：<所有者>`消歧                     |
 | 文档搜索、完整路径与 URL 消歧                                   | 可用                                                         |
 | 普通文档正文、版本、指纹和富内容类型读取                        | 可用                                                         |
+| 普通文档原生 Word/Markdown/PDF/Lake/JPG 导出链接                | 个人Host已验证；只返回链接，不下载或缓存文件                 |
 | LakeSheet 工作表、A1 范围、值、公式、基础格式和部分图表信息读取 | 可用                                                         |
 | 文档与表格的结构化 Diff、预览、快照和冲突检查                   | 可用                                                         |
 | 私有个人知识库创建                                              | 已验证；默认`strict`只预览，`best_effort`可确认并回读最终URL |
@@ -25,7 +26,7 @@
 | 私有知识库 reader/editor 协作者管理                             | 已验证；默认关闭，需精确白名单及`best_effort`确认            |
 | Doc、Sheet 和知识库整对象删除                                   | 个人Host已验证；默认关闭，需显式开关、精确白名单和二次确认   |
 
-服务目前注册36个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
+服务目前注册37个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
 
 ## 数据安全
 
@@ -39,6 +40,7 @@
 - 写入一致性默认使用`strict`，缺少可靠并发保护时只生成Preview，不发送远程请求。
 - `WRITE_KILL_SWITCH=true`可在事故或契约变化时关闭全部远程Confirm。
 - 登录完成后临时 Chromium 会话会关闭，日常业务请求不依赖持续运行的可视化浏览器。
+- 原生导出只把语雀生成的下载URL返回给当前调用者；服务不下载或缓存文件，完整签名URL不写入SQLite、审计日志或普通运行日志。
 
 ## 环境要求
 
@@ -105,6 +107,7 @@ npm run local:start
 - 定位与搜索：`yuque_search`、`yuque_get_toc`、`yuque_list_docs`、`yuque_list_all_docs`
 - 目录变更：`yuque_preview_change_catalog`；`TITLE`分组支持创建/重命名/移动/空分组删除，Doc/Sheet目录项支持移动
 - 文档与表格：`yuque_get_doc`、`yuque_get_sheet`
+- 文档导出：先用`yuque_get_export_options`识别目标类型并让用户选择格式，再调用`yuque_create_export_link`；普通Doc支持`word`、`markdown`、`pdf`、`lake`、`jpg`，LakeSheet支持`excel`、`lakesheet`，只返回语雀下载链接
 - 评论：`yuque_list_comments`、`yuque_preview_change_comment`；修改/删除首版仅限当前员工自己的评论
 - 变更流程：各类 `yuque_preview_*`、`yuque_confirm_change`、`yuque_cancel_change`
 - 快照：`yuque_list_snapshots`、`yuque_preview_restore_snapshot`
@@ -147,14 +150,14 @@ npm run build
 export YUQUE_MCP_INSTANCES_ROOT=/srv/yuque-web-mcp
 npm run create-instance -- employee-a --port 18101 \
   --public-base-url https://employee-a-mcp.example.com \
-  --image registry.example.com/yuque-web-mcp:1.0.0 \
+  --image registry.example.com/yuque-web-mcp:1.2.0 \
   --bind-address 127.0.0.1
 
 npm run start-instance -- employee-a
 npm run status-instance -- employee-a
 npm run backup-instance -- employee-a
 npm run upgrade-instance -- employee-a \
-  --image registry.example.com/yuque-web-mcp:1.0.0
+  --image registry.example.com/yuque-web-mcp:1.2.0
 ```
 
 `create-instance`返回私密`service.env`的位置。它还会生成仅含非敏感运行UID/GID的私有`.env`，让非root容器与宿主机`data/`保持一致的写权限，并把已校验的Chromium seccomp profile复制到实例目录；缺失、默认放行或未明确允许沙箱所需调用的profile会让创建失败关闭。可用`YUQUE_MCP_CHROMIUM_SECCOMP_PROFILE`指定另一份经过等效审计的绝对路径。不要手工修改或跨实例复制实例文件。通过安全的密钥渠道把`service.env`中的MCP Bearer Token交给对应员工，不要复制整个文件。`backup-instance`包含登录会话和密钥，备份目录必须按机密数据管理。升级会先备份；拉取或启动新镜像失败时会恢复旧Compose并尝试启动旧版本。
@@ -205,7 +208,7 @@ npm run check
 
 普通自动测试使用脱敏 fixture，不访问真实语雀。任何真实写入验证都应在专用测试知识库中人工启用，并在执行前确认目标完整路径、账号和 Host。
 
-部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、36个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是v1.0的强制发布门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应员工重新扫码即可恢复。
+部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、37个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应员工重新扫码即可恢复。
 
 ```bash
 MCP_ENV_FILE=/absolute/private/service.env \

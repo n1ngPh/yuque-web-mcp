@@ -12,7 +12,7 @@ RUN npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runtime
 
-ARG VERSION=1.0.0
+ARG VERSION=1.2.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="yuque-web-mcp" \
       org.opencontainers.image.version="${VERSION}" \

@@ -33,6 +33,7 @@ export type CapabilityName =
   | "change_catalog"
   | "list_docs"
   | "get_doc"
+  | "create_doc_export"
   | "get_doc_editor"
   | "get_doc_lock"
   | "acquire_doc_lock"

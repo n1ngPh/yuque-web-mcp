@@ -59,7 +59,7 @@ describe("Streamable HTTP single-owner boundary", () => {
         params: {},
       });
       expect(tools.response.status).toBe(200);
-      expect(tools.payload.result?.tools).toHaveLength(36);
+      expect(tools.payload.result?.tools).toHaveLength(38);
 
       const invalidSessionToken = await rpc(mcpUrl, "invalid", sessionA, {
         jsonrpc: "2.0",

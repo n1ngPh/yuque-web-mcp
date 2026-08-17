@@ -7,7 +7,7 @@ import {
 import type { AppDatabase } from "./db.js";
 import type { SessionStore } from "./session-store.js";
 import { parseLoginProvider, type LoginManager } from "./login-manager.js";
-import type { YuqueWebClient } from "./yuque-client.js";
+import type { YuqueExportFormat, YuqueWebClient } from "./yuque-client.js";
 import type { ChangeStore } from "./change-store.js";
 import { readSheetRange } from "./sheet-model.js";
 import {
@@ -60,6 +60,7 @@ export const MCP_INSTRUCTIONS = `语雀网页会话 MCP（安全自托管版）�
 目录变更规则：个人私有知识库中的TITLE分组创建、重命名、移动与空分组删除，以及Doc/Sheet目录项在目录树内的移动已完成真实验证；先调用yuque_get_toc取得完整路径和UUID，再调用yuque_preview_change_catalog。删除只允许无任何子节点的空分组，必须展示完整路径并进行删除双确认；不得通过目录工具删除Doc或Sheet整对象。
 评论规则：个人空间普通Doc的评论列表以及当前员工自己评论的创建、修改、删除已完成网页捕获和关浏览器发包验证。先用yuque_list_comments读取完整文档路径和comment_id；写入统一使用yuque_preview_change_comment。删除评论只删除单条评论内容，不删除Doc，但仍必须展示Diff并以confirm_deletions=true二次确认。
 版本规则：个人空间普通Doc的历史版本列表和指定版本正文读取使用已验证网页接口；先展示原文档完整路径和URL，再展示version_id、版本时间和作者。历史版本恢复必须通过yuque_preview_restore_doc_version；它复用已验证的原生Doc内容写入链路，不调用或猜测专用恢复接口，并继续执行Preview/Confirm、锁、快照、冲突检查和回读。
+原生导出规则：个人或公司空间导出前先调用yuque_get_export_options，展示完整路径、URL和目标类型对应的available_formats并让用户选择；用户已经明确指定格式时可直接调用yuque_create_export_link。普通Doc支持Word、Markdown、PDF、语雀Lake、JPG，LakeSheet支持Excel和语雀LakeSheet，不得给目标类型传入其他格式。服务按语雀官方页面规则轮询异步导出任务，只返回语雀生成的链接，不下载、不缓存导出文件，也不把完整签名链接写入数据库或审计日志。返回browser_login_required=true时，用户必须在自己的浏览器中登录同一语雀账号后打开链接；临时签名链接等同短期访问凭据，不得转发给无关人员。
 当前已真实验证并允许调用的能力：登录状态、绑定用户、个人/公司作用域发现、个人/公司自有知识库、个人受邀知识库及reader/editor角色、私有个人知识库协作者列表与权限变更、目录、全局文档位置、Doc纯文本读取、企业/知识库全文搜索、Markdown转Lake、LakeSheet值/公式/已支持基础格式范围读取、多工作表与空工作簿读取，以及本地退出。个人Host的Doc正文追加/章节替换/章节删除/改标题、历史版本读取与经安全Doc链路恢复、Sheet值/公式/基础格式和已验证工作表操作已完成strict阻断与best_effort真实Preview/Confirm、临时锁、写前加密快照、单次写入、超时只读对账、写后回读及Doc/Sheet快照恢复；strict仍不发远程内容写请求。共享知识库完整路径使用“共享：<所有者> / <知识库> / ...”；邀请创建后接收方仍需在语雀确认加入。权限变更默认关闭，只有ALLOW_PERMISSION_CHANGES=true、best_effort和精确知识库白名单同时满足时才能Confirm。个人空间的全局全文搜索尚未验证，必须提供个人 book_url 做知识库范围搜索。Sheet Preview中的公式缓存值由服务自行计算，当前只支持四则运算和SUM/AVERAGE/MIN/MAX/COUNT/COUNTA/IF/AND/OR/NOT/COUNTIF/SUMIF/COUNTIFS/SUMIFS/AVERAGEIF/AVERAGEIFS/COUNTBLANK/LARGE/SMALL/STDEVP/VARP/STDEVS/VARS/ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISEVEN/ISODD/ABS/ROUND/CEILING/FLOOR/SUMPRODUCT/CHOOSE/RANK/SIGN/PI/EXP/LN/LOG/LOG10/TRUNC/MROUND/QUOTIENT/SIN/COS/TAN/DEGREES/RADIANS/FACT/GCD/LCM/COMBIN/SUMSQ/CONCAT/CONCATENATE/LEFT/RIGHT/MID/LEN/LOWER/UPPER/TRIM/FIND/SEARCH/SUBSTITUTE/REPLACE/REPT/EXACT/ROUNDUP/ROUNDDOWN/INT/MOD/SQRT/POWER/PRODUCT/MEDIAN/VLOOKUP/HLOOKUP/MATCH/INDEX；其中STDEVP/VARP只接受至少1个数值的单一范围，STDEVS/VARS只接受至少2个数值的单一范围，非数值格忽略；VLOOKUP/HLOOKUP/MATCH只允许已验证的精确匹配模式，RANK只允许降序模式0，CEILING/FLOOR只允许非负值和正步长，SUMPRODUCT只允许两个等维纯数值范围，CHOOSE只允许标量候选，LOG和TRUNC只允许已验证的两参数形式，MROUND只允许非负数和正倍数，LN/LOG10拒绝非正数，QUOTIENT拒绝零除数，FACT与COMBIN只接受0至170的安全整数范围，GCD/LCM只接受非负安全整数且LCM拒绝超出安全整数的结果，SUMSQ只接受标量参数，FIND/SEARCH只允许带明确起始位置的三参数形式，SUBSTITUTE只允许三参数全量替换，SUBSTITUTE/REPLACE/REPT结果最多10,000字符，多条件函数要求范围维度一致且拒绝通配符。调用方提交的formula.value会被忽略，普通单元格变化会重算同表既有公式并进入Diff，未知函数和循环引用会拒绝。固定包不支持MAXIFS/MINIFS，NOW/TODAY/RAND等易变函数也保持关闭，不能猜测开放。个人测试表已验证column/stackColumn/bar/stackBar/line/smoothLine/pie/ring八类图表的类型字段写入、回读与完整恢复；其中column还验证了6套主题、6套布局以及边框、隐藏/空数据展示、网格线、Y轴格式化及前后缀、标题/轴标题、图例、数据标签、X轴标签与旋转、Y轴上下限等21个显示配置路径。个人Host现在允许通过yuque_preview_update_sheet生成严格白名单图表Diff：create_column_chart仅限无其他内容或vessel的单工作表A1:B3六个简单单元格结构，set_chart_type支持八类已验证类型，update_column_chart_display仅限column及已验证字段，delete_chart仅限完成网页捕获、关闭浏览器重放和精确恢复的同形态单柱状图；删除Preview必须展示图表类型、来源范围和工作表并要求confirm_deletions=true。所有图表Preview只本地编解码且可取消，不发送远程写请求。原始vessels/chartConfigs永不接受或输出，图表Confirm仍关闭。Lake转Markdown和图表Confirm继续安全失败关闭；禁止猜测接口或绕过门禁。
 推荐读取流程：先调用 yuque_auth_status；未登录时依次调用 yuque_login_begin 和 yuque_login_status。然后调用 yuque_list_scopes 并选择显式 scope_id。查找文档优先调用 yuque_list_all_docs，使用 query 按标题、知识库、完整目录路径或 URL 过滤，并用 offset/limit 分页；只在明确需要单个知识库目录时调用 yuque_get_toc 或 yuque_list_docs。定位目标后，把返回的完整 url 作为 doc_url 调用 yuque_get_doc。
 yuque_list_all_docs 只返回位置索引，不返回正文；不要试图一次读取所有文档正文。其索引缓存五分钟，只有必须获取最新目录时才设置 force_refresh=true。yuque_get_doc 返回 plain_text 正文以及 version、updated_at、fingerprint 等元数据。
@@ -286,6 +287,46 @@ export const toolDefinitions: ToolDefinition[] = [
         ),
       },
       required: ["doc_url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "yuque_get_export_options",
+    description:
+      "读取个人或公司空间目标的类型和已验证可选导出格式，不生成导出文件。普通Doc返回word、markdown、pdf、lake、jpg；LakeSheet返回excel、lakesheet。必须先展示document.display_path和document.url，再让用户选择available_formats；用户已明确指定格式时可跳过本工具。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        doc_url: stringProperty("Full Yuque Doc or LakeSheet URL."),
+      },
+      required: ["doc_url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "yuque_create_export_link",
+    description:
+      "为已定位的个人或公司空间普通Doc/LakeSheet生成语雀原生下载链接。Doc支持word、markdown、pdf、lake、jpg；LakeSheet支持excel、lakesheet。用户未指定格式时先调用yuque_get_export_options并等待选择。服务不下载或缓存文件；返回前先展示document.display_path和document.url。browser_login_required=true时，用户浏览器需登录同一语雀账号。临时签名URL不得转发给无关人员。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        doc_url: stringProperty("Full Yuque Doc or LakeSheet URL."),
+        format: {
+          type: "string",
+          enum: [
+            "word",
+            "markdown",
+            "pdf",
+            "lake",
+            "jpg",
+            "excel",
+            "lakesheet",
+          ],
+          description:
+            "One format returned by yuque_get_export_options for this target.",
+        },
+      },
+      required: ["doc_url", "format"],
       additionalProperties: false,
     },
   },
@@ -890,6 +931,79 @@ async function callTool(
         version: doc.version,
         updated_at: doc.updatedAt,
         fingerprint: doc.fingerprint,
+      };
+    }
+    case "yuque_get_export_options": {
+      const result = await deps.client.getExportOptions(
+        employeeId,
+        requireString(args, "doc_url"),
+      );
+      return {
+        response_rule:
+          "先展示document.display_path与document.url，再列出available_formats并让用户选择；用户确认前不要调用yuque_create_export_link。",
+        document: {
+          id: result.document.id,
+          title: result.document.title,
+          display_path: result.document.displayPath,
+          full_path: result.document.fullPath,
+          url: result.document.url,
+          book_url: result.document.bookUrl,
+        },
+        target_type: result.targetType,
+        source_format: result.sourceFormat,
+        available_formats: result.availableFormats.map((option) => ({
+          format: option.format,
+          label: option.label,
+          extension: option.extension,
+          browser_login_expected: option.browserLoginExpected,
+        })),
+        export_started: false,
+      };
+    }
+    case "yuque_create_export_link": {
+      const format = requireString(args, "format");
+      if (
+        ![
+          "word",
+          "markdown",
+          "pdf",
+          "lake",
+          "jpg",
+          "excel",
+          "lakesheet",
+        ].includes(format)
+      ) {
+        throw new Error(
+          "format must be word, markdown, pdf, lake, jpg, excel or lakesheet",
+        );
+      }
+      const result = await deps.client.createExportLink(
+        employeeId,
+        requireString(args, "doc_url"),
+        format as YuqueExportFormat,
+      );
+      return {
+        response_rule:
+          "先向用户展示document.display_path与document.url，再提供download_url。browser_login_required=true时提醒用户用已登录同一语雀账号的浏览器打开；不要在回答中重复、记录或转发临时签名链接。",
+        document: {
+          id: result.document.id,
+          title: result.document.title,
+          display_path: result.document.displayPath,
+          full_path: result.document.fullPath,
+          url: result.document.url,
+          book_url: result.document.bookUrl,
+        },
+        target_type: result.targetType,
+        format: result.format,
+        filename: result.filename,
+        download_url: result.downloadUrl,
+        expires_at: result.expiresAt ?? null,
+        browser_login_required: result.browserLoginRequired,
+        delivery_host: result.deliveryHost,
+        poll_requests: result.pollRequests,
+        file_downloaded_by_mcp: false,
+        security_notice:
+          "该链接可能包含临时签名或依赖当前语雀会话，请仅交付给请求导出的本人。",
       };
     }
     case "yuque_list_comments": {

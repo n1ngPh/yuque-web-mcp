@@ -12,7 +12,7 @@ describe("Capability Registry", () => {
     expect(capabilityToolNames()).toEqual(
       toolDefinitions.map((tool) => tool.name),
     );
-    expect(capabilityToolNames()).toHaveLength(36);
+    expect(capabilityToolNames()).toHaveLength(38);
   });
 
   it("reports strict mode without exposing configured secrets or hosts", () => {
@@ -21,7 +21,7 @@ describe("Capability Registry", () => {
       report.capabilities as Array<Record<string, unknown>>
     ).find((entry) => entry.tool === "yuque_confirm_change");
     expect(report).toMatchObject({
-      server_version: "1.0.0",
+      server_version: "1.2.0",
       contract_version: "fixture-contract",
       write_consistency_mode: "strict",
       safeguards: {

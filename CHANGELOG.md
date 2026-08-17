@@ -4,6 +4,16 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## Unreleased
 
+## 1.2.0 - 2026-08-18
+
+- Add `yuque_get_export_options` so agents can show the exact target path, detect Doc versus LakeSheet, and let the user choose only formats verified for that type.
+- Extend native export links to personal and organization Hosts, add Excel/LakeSheet formats, and follow the pinned Yuque frontend's five-second polling workflow for non-terminal export states.
+- Continue returning links without downloading or persisting files, with fail-closed delivery Host, path, query, and signature validation.
+
+## 1.1.0 - 2026-08-17
+
+- Add the verified `yuque_create_export_link` tool for native Word, Markdown, PDF, Lake, and JPG document exports. It returns Yuque-generated URLs without downloading or persisting export files and validates delivery Hosts, paths, query contracts, and signature expiry.
+
 ## 1.0.0 - 2026-08-16
 
 - Add production readiness, protected metrics, structured logging, request IDs, concurrency limits, graceful shutdown, runtime locking, outbound proxy/custom CA support, and a global write kill switch.

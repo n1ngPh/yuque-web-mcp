@@ -37,6 +37,8 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
   available("yuque_list_docs", personalAndOrganization),
   available("yuque_list_all_docs", personalAndOrganization),
   available("yuque_get_doc", personalAndOrganization),
+  available("yuque_get_export_options", personalAndOrganization),
+  available("yuque_create_export_link", personalAndOrganization),
   available("yuque_list_comments", personal),
   available("yuque_list_doc_versions", personal),
   available("yuque_get_doc_version", personal),

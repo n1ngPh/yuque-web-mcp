@@ -80,6 +80,114 @@ export interface NormalizedDoc {
   fingerprint: string;
 }
 
+export const YUQUE_EXPORT_FORMATS = [
+  "word",
+  "markdown",
+  "pdf",
+  "lake",
+  "jpg",
+  "excel",
+  "lakesheet",
+] as const;
+
+export type YuqueExportFormat = (typeof YUQUE_EXPORT_FORMATS)[number];
+export type YuqueExportTargetType = "Doc" | "Sheet";
+
+export interface YuqueExportOption {
+  format: YuqueExportFormat;
+  label: string;
+  extension: string;
+  browserLoginExpected: boolean;
+}
+
+export interface YuqueExportOptions {
+  targetType: YuqueExportTargetType;
+  sourceFormat: string;
+  availableFormats: YuqueExportOption[];
+  document: {
+    id: string;
+    title: string;
+    url: string;
+    bookUrl: string;
+    displayPath: string;
+    fullPath: string[];
+  };
+}
+
+export interface YuqueExportLink {
+  targetType: YuqueExportTargetType;
+  format: YuqueExportFormat;
+  filename: string;
+  downloadUrl: string;
+  expiresAt?: string;
+  browserLoginRequired: boolean;
+  deliveryHost: string;
+  pollRequests: number;
+  document: {
+    id: string;
+    title: string;
+    url: string;
+    bookUrl: string;
+    displayPath: string;
+    fullPath: string[];
+  };
+}
+
+const EXPORT_OPTIONS: Record<
+  YuqueExportTargetType,
+  readonly YuqueExportOption[]
+> = {
+  Doc: [
+    {
+      format: "word",
+      label: "Word",
+      extension: "docx",
+      browserLoginExpected: false,
+    },
+    {
+      format: "markdown",
+      label: "Markdown",
+      extension: "md",
+      browserLoginExpected: true,
+    },
+    {
+      format: "pdf",
+      label: "PDF",
+      extension: "pdf",
+      browserLoginExpected: true,
+    },
+    {
+      format: "lake",
+      label: "语雀 Lake",
+      extension: "lake",
+      browserLoginExpected: true,
+    },
+    {
+      format: "jpg",
+      label: "JPG 长图",
+      extension: "jpg",
+      browserLoginExpected: true,
+    },
+  ],
+  Sheet: [
+    {
+      format: "excel",
+      label: "Excel",
+      extension: "xlsx",
+      browserLoginExpected: true,
+    },
+    {
+      format: "lakesheet",
+      label: "语雀 LakeSheet",
+      extension: "lakesheet",
+      browserLoginExpected: true,
+    },
+  ],
+};
+
+const EXPORT_POLL_INTERVAL_MS = 5_000;
+const EXPORT_MAX_POLL_REQUESTS = 24;
+
 export interface NormalizedDocEditorDraft {
   id: string;
   slug: string;
@@ -447,6 +555,9 @@ export class YuqueWebClient {
     private readonly contracts: ContractRegistry,
     private readonly sessions: SessionStore,
     private readonly lakeHtml: LakeHtmlRenderer = new PinnedLakeHtmlRenderer(),
+    private readonly exportPollDelay: (
+      milliseconds: number,
+    ) => Promise<void> = wait,
   ) {
     this.dispatcher = createYuqueDispatcher(config);
   }
@@ -1947,6 +2058,174 @@ export class YuqueWebClient {
       );
     }
     return { ...normalized, location: located.position };
+  }
+
+  async getExportOptions(
+    employeeId: string,
+    docUrl: string,
+  ): Promise<YuqueExportOptions> {
+    const target = await this.resolveExportTarget(employeeId, docUrl);
+    return {
+      targetType: target.targetType,
+      sourceFormat: target.sourceFormat,
+      availableFormats: EXPORT_OPTIONS[target.targetType].map((option) => ({
+        ...option,
+      })),
+      document: target.document,
+    };
+  }
+
+  async createExportLink(
+    employeeId: string,
+    docUrl: string,
+    format: YuqueExportFormat,
+  ): Promise<YuqueExportLink> {
+    if (!YUQUE_EXPORT_FORMATS.includes(format)) {
+      throw new Error(
+        "format must be word, markdown, pdf, lake, jpg, excel or lakesheet",
+      );
+    }
+    const target = await this.resolveExportTarget(employeeId, docUrl);
+    const option = EXPORT_OPTIONS[target.targetType].find(
+      (candidate) => candidate.format === format,
+    );
+    if (!option) {
+      throw new ContractError(
+        `${target.targetType} cannot be exported as ${format}; call yuque_get_export_options and let the user choose an available format`,
+      );
+    }
+    const requestBody: Record<string, unknown> = {
+      type: format,
+      force: 0,
+    };
+    if (format === "markdown") {
+      requestBody.options = JSON.stringify({ latexType: 1, useMdai: 1 });
+    } else if (format === "pdf") {
+      requestBody.options = JSON.stringify({ enableToc: 1 });
+    }
+
+    let exportResponse: Record<string, unknown> | undefined;
+    let pollRequests = 0;
+    while (pollRequests < EXPORT_MAX_POLL_REQUESTS) {
+      pollRequests += 1;
+      const response = asRecord(
+        await this.request(employeeId, "create_doc_export", {
+          pathParams: { docId: target.document.id },
+          body: requestBody,
+          referer: target.document.url,
+          baseHost: target.book.host,
+        }),
+        "Document export response",
+      );
+      const state = requireStringValue(response, "state");
+      if (state === "success") {
+        exportResponse = response;
+        break;
+      }
+      if (state === "error") {
+        throw new ContractError("Yuque rejected the requested export");
+      }
+      if (pollRequests < EXPORT_MAX_POLL_REQUESTS) {
+        await this.exportPollDelay(EXPORT_POLL_INTERVAL_MS);
+      }
+    }
+    if (!exportResponse) {
+      throw new ContractError(
+        "Yuque export is still processing after two minutes; no file was downloaded and the request was not forced or restarted",
+      );
+    }
+    const rawUrl = requireStringValue(exportResponse, "url");
+    if (!rawUrl) {
+      throw new ContractError("Yuque export response contains an empty URL");
+    }
+    const delivery = validateExportUrl({
+      rawUrl,
+      format,
+      targetType: target.targetType,
+      documentOrigin: target.locator.origin,
+      ownerSlug: target.locator.groupSlug,
+      bookSlug: target.locator.bookSlug,
+      docSlug: target.docSlug,
+    });
+    return {
+      targetType: target.targetType,
+      format,
+      filename: safeExportFilename(target.document.title, option.extension),
+      downloadUrl: delivery.url,
+      ...(delivery.expiresAt ? { expiresAt: delivery.expiresAt } : {}),
+      browserLoginRequired: delivery.browserLoginRequired,
+      deliveryHost: delivery.host,
+      pollRequests,
+      document: target.document,
+    };
+  }
+
+  private async resolveExportTarget(employeeId: string, docUrl: string) {
+    const locator = parseYuqueUrl(docUrl, this.allowedYuqueHosts());
+    if (!locator.docSlug) {
+      throw new Error("doc_url must include a document slug");
+    }
+    const book = await this.resolveBook(employeeId, docUrl);
+    const detail = asRecord(
+      await this.request(employeeId, "get_doc", {
+        pathParams: { docSlug: locator.docSlug },
+        query: {
+          book_id: book.id,
+          include_contributors: true,
+          include_like: true,
+          include_hits: true,
+          merge_dynamic_data: false,
+        },
+        baseHost: book.host,
+      }),
+      "Export target document",
+    );
+    const id = String(requireNumber(detail, "id"));
+    const title = requireStringValue(detail, "title");
+    const slug = requireStringValue(detail, "slug");
+    const rawType = detail.type;
+    if (
+      (rawType !== "Doc" && rawType !== "Sheet") ||
+      (rawType === "Doc" && detail.format === "lakesheet") ||
+      (rawType === "Sheet" && detail.format !== "lakesheet") ||
+      requireNumber(detail, "book_id") !== book.id ||
+      slug !== locator.docSlug
+    ) {
+      throw new ContractError(
+        "Native export currently supports only the requested ordinary Doc or LakeSheet",
+      );
+    }
+    const targetType: YuqueExportTargetType = rawType;
+    const abilities = asRecord(detail.abilities, "Document abilities");
+    if (abilities.export !== true) {
+      throw new ContractError(
+        "The current Yuque account is not allowed to export this document",
+      );
+    }
+    const nodes = await this.loadCatalog(employeeId, book);
+    const located = catalogDocuments(book, nodes).find(
+      (document) => String(document.id) === id || document.slug === slug,
+    );
+    if (!located) {
+      throw new ContractError(
+        "Document is exportable but its full catalog path could not be resolved",
+      );
+    }
+    return {
+      targetType,
+      sourceFormat: requireStringValue(detail, "format"),
+      docSlug: locator.docSlug,
+      locator,
+      book,
+      document: {
+        id,
+        title,
+        url: located.url,
+        bookUrl: book.url,
+        displayPath: located.position.displayPath,
+        fullPath: located.position.fullPath,
+      },
+    };
   }
 
   async getDocEditorDraft(
@@ -4229,6 +4508,128 @@ function partialUninitializedSheetResult(input: {
     catalogMounted: true,
     reconciledAfterUnknownResponse: input.reconciledAfterUnknownResponse,
   };
+}
+
+export function validateExportUrl(input: {
+  rawUrl: string;
+  format: YuqueExportFormat;
+  targetType: YuqueExportTargetType;
+  documentOrigin: string;
+  ownerSlug: string;
+  bookSlug: string;
+  docSlug: string;
+}): {
+  url: string;
+  host: string;
+  browserLoginRequired: boolean;
+  expiresAt?: string;
+} {
+  if (
+    !EXPORT_OPTIONS[input.targetType].some(
+      (option) => option.format === input.format,
+    )
+  ) {
+    throw new ContractError(
+      `Yuque ${input.targetType} export format is not enabled: ${input.format}`,
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(input.rawUrl, input.documentOrigin);
+  } catch {
+    throw new ContractError("Yuque export returned an invalid URL");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+    throw new ContractError("Yuque export returned an unsafe URL");
+  }
+  const queryKeys = [...url.searchParams.keys()].sort();
+  if (new Set(queryKeys).size !== queryKeys.length) {
+    throw new ContractError("Yuque export URL contains duplicate parameters");
+  }
+  const requireQuery = (expected: string[]) => {
+    if (
+      JSON.stringify(queryKeys) !== JSON.stringify([...expected].sort()) ||
+      expected.some((key) => !url.searchParams.get(key))
+    ) {
+      throw new ContractError("Yuque export URL parameters changed");
+    }
+  };
+  if (input.targetType === "Doc" && input.format === "word") {
+    if (
+      url.hostname.toLowerCase() !== "lark-temp.oss-cn-hangzhou.aliyuncs.com" ||
+      !/^\/__temp\/[^/]+\/docx\/[^/]+\.docx$/.test(url.pathname)
+    ) {
+      throw new ContractError("Yuque Word export delivery Host changed");
+    }
+    requireQuery(["Expires", "OSSAccessKeyId", "Signature"]);
+    const expiresSeconds = Number(url.searchParams.get("Expires"));
+    if (
+      !Number.isSafeInteger(expiresSeconds) ||
+      expiresSeconds * 1_000 <= Date.now()
+    ) {
+      throw new ContractError("Yuque Word export URL is already expired");
+    }
+    return {
+      url: url.toString(),
+      host: url.hostname.toLowerCase(),
+      browserLoginRequired: false,
+      expiresAt: new Date(expiresSeconds * 1_000).toISOString(),
+    };
+  }
+  if (url.origin !== new URL(input.documentOrigin).origin) {
+    throw new ContractError("Yuque export returned an unknown delivery Host");
+  }
+  if (
+    (input.targetType === "Doc" &&
+      (input.format === "markdown" || input.format === "lake")) ||
+    (input.targetType === "Sheet" && input.format === "lakesheet")
+  ) {
+    const expectedPath = `/${encodeURIComponent(input.ownerSlug)}/${encodeURIComponent(input.bookSlug)}/${encodeURIComponent(input.docSlug)}/${input.format}`;
+    if (url.pathname !== expectedPath) {
+      throw new ContractError("Yuque document export route changed");
+    }
+    requireQuery(
+      input.format === "markdown"
+        ? ["anchor", "attachment", "latexcode", "linebreak", "useMdai"]
+        : ["attachment"],
+    );
+  } else if (
+    input.targetType === "Doc" &&
+    (input.format === "pdf" || input.format === "jpg")
+  ) {
+    if (!/^\/attachments\/__temp\/[^/]+\/[^/]+\/[^/]+$/.test(url.pathname)) {
+      throw new ContractError("Yuque temporary export route changed");
+    }
+    requireQuery(["attachable_id", "attachable_type", "filename"]);
+  } else if (input.targetType === "Sheet" && input.format === "excel") {
+    if (
+      !/^\/attachments\/__temp\/[^/]+\/xlsx\/[^/]+\.xlsx$/.test(url.pathname)
+    ) {
+      throw new ContractError("Yuque Excel export route changed");
+    }
+    requireQuery(["attachable_id", "attachable_type", "filename"]);
+  } else {
+    throw new ContractError(
+      `Yuque ${input.targetType} export format is not enabled: ${input.format}`,
+    );
+  }
+  return {
+    url: url.toString(),
+    host: url.hostname.toLowerCase(),
+    browserLoginRequired: true,
+  };
+}
+
+function safeExportFilename(title: string, extension: string): string {
+  const safeTitle = title
+    .replace(/[\\/:*?"<>|%]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `${safeTitle || "yuque-export"}.${extension}`;
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function workbookCellFingerprint(workbook: NormalizedWorkbook): string {

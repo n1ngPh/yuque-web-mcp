@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-16-personal-best-effort-content-write-54",
-  "verifiedAt": "2026-08-16T00:00:00.000Z",
+  "version": "2026-08-17-doc-sheet-native-export-options-56",
+  "verifiedAt": "2026-08-17T16:00:00.000Z",
   "sourceBundles": [
     {
       "url": "https://gw.alipayobjects.com/os/chair-script/skylark/common.d114c29e.js",
@@ -49,6 +49,14 @@
     {
       "url": "https://gw.alipayobjects.com/os/chair-script/skylark/c__DocHistory.ac47ca2b.async.js",
       "sha256": "b810d487a93c064bf96a060250feb2417e225074b31134df2e6a764d454c9d1a"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/59667.32a1a77d.async.js",
+      "sha256": "197c03486bac528770529d6266b6cf7839b75d460145e9cbbe39d2688274ecd0"
+    },
+    {
+      "url": "https://gw.alipayobjects.com/os/chair-script/skylark/pc.2188dd6d.js",
+      "sha256": "210fd8f048ffbef8c6a67b5f495fad689adab1fad7c81b4b06d2ce11f8d405c1"
     }
   ],
   "endpoints": [
@@ -873,6 +881,69 @@
         "data.draft_version",
         "data.body_draft"
       ]
+    },
+    {
+      "capability": "create_doc_export",
+      "verified": true,
+      "observedHostTypes": ["personal", "organization"],
+      "verifiedHostTypes": ["personal", "organization"],
+      "method": "POST",
+      "path": "/api/docs/{docId}/export",
+      "deletionEffect": "none",
+      "idempotent": false,
+      "requiredResponsePaths": ["data.state"],
+      "verifiedScenarios": [
+        {
+          "id": "personal-doc-native-export-links-v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-17T14:54:00.000Z",
+          "writeAttempts": 5,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 1,
+          "constraints": [
+            "web UI and closed-browser Cookie-Jar replay agree for word, markdown, pdf, lake and jpg",
+            "word returns an expiring HTTPS OSS signature that does not require the browser session",
+            "markdown and lake return same-account www.yuque.com document export routes",
+            "pdf and jpg return same-account www.yuque.com temporary attachment routes",
+            "the MCP never fetches or persists the generated file",
+            "complete signed URLs are returned only to the caller and are excluded from logs, SQLite and audit records",
+            "immediate success is accepted without retry; non-terminal states are polled only according to the pinned official frontend workflow"
+          ]
+        },
+        {
+          "id": "personal-lakesheet-native-export-options-v1",
+          "verifiedHostType": "personal",
+          "verifiedAt": "2026-08-17T16:00:00.000Z",
+          "writeAttempts": 3,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 0,
+          "constraints": [
+            "a fixed personal LakeSheet exported as Excel and LakeSheet through the closed-browser Cookie Jar",
+            "Excel completed after the official non-terminal-state polling flow and returned a same-account temporary attachment route",
+            "LakeSheet returned a same-account document export route",
+            "no generated file or complete download URL was persisted"
+          ]
+        },
+        {
+          "id": "organization-doc-sheet-native-export-options-v1",
+          "verifiedHostType": "organization",
+          "verifiedAt": "2026-08-17T16:00:00.000Z",
+          "writeAttempts": 14,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 0,
+          "constraints": [
+            "an explicitly authorized organization Doc exported as word, markdown, pdf, lake and jpg",
+            "an explicitly authorized organization LakeSheet exported as excel and lakesheet",
+            "non-terminal responses were polled at the pinned frontend interval without force or blind transport retry",
+            "every final delivery Host, path shape and query-key set matched the personal-host contract family",
+            "no generated file or complete download URL was persisted"
+          ]
+        }
+      ],
+      "notes": "Pinned frontend evidence identifies docs.exports, the Doc/Sheet format matrix and the five-second non-terminal-state polling workflow. Live closed-browser replay and response URL validation completed for personal Doc, personal LakeSheet, organization Doc and organization LakeSheet. The result is an export artifact link, not a document mutation; Preview/Confirm is not used."
     },
     {
       "capability": "logout",

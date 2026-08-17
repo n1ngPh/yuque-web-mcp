@@ -1,6 +1,6 @@
 {
   "name": "yuque-web-mcp",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "license": "Apache-2.0",
   "description": "Secure self-hosted MCP server for Yuque web sessions",

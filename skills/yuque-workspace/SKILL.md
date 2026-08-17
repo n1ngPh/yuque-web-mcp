@@ -1,6 +1,6 @@
 ---
 name: yuque-workspace
-description: Safely locate, read, create, update, restore, share, and remove Yuque knowledge bases, directories, documents, sheets, comments, and versions through the yuque-web-mcp tools. Use when a user asks to find or summarize Yuque content, resolve duplicate names by full path, prepare or confirm a Yuque change, collaborate with reader/editor roles, recover from conflicts, or inspect the server's available capabilities.
+description: Safely locate, read, export, create, update, restore, share, and remove Yuque knowledge bases, directories, documents, sheets, comments, and versions through the yuque-web-mcp tools. Use when a user asks to find, summarize, or export Yuque content, resolve duplicate names by full path, prepare or confirm a Yuque change, collaborate with reader/editor roles, recover from conflicts, or inspect the server's available capabilities.
 ---
 
 # Yuque Workspace
@@ -28,6 +28,15 @@ Use the configured `yuque_*` MCP tools. Never ask for or handle Yuque cookies, C
 - Distinguish source content from your summary or inference.
 - Report proprietary or unsupported Lake blocks before suggesting edits.
 - For sheets, preserve value types, formulas, and the requested basic formatting metadata.
+
+## Export a document or sheet
+
+- Locate one exact Doc or LakeSheet URL and show its full path.
+- If the user did not already choose a format, call `yuque_get_export_options`, show every returned option, and wait for the user to choose before calling `yuque_create_export_link`.
+- Use only a format returned for that exact target. Ordinary Docs support `word`, `markdown`, `pdf`, `lake`, and `jpg`; LakeSheets support `excel` and `lakesheet`. Never substitute a guessed cross-type format or endpoint.
+- Return the generated link once. If `browser_login_required=true`, tell the user to open it in a browser signed into the same Yuque account.
+- Treat a signed link as a short-lived access credential. Do not copy it into notes, logs, prompts, or unrelated messages.
+- Do not fetch the link, download the file, or claim that the MCP stored an export.
 
 ## Change through Preview and Confirm
 

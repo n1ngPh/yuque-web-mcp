@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: yuque-web-mcp:1.0.0
+    image: yuque-web-mcp:1.2.0
     restart: unless-stopped
     stop_grace_period: 35s
     env_file:

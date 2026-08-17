@@ -19,7 +19,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const INDEX_SCHEMA_VERSION = 1;
-const DEFAULT_IMAGE = "yuque-web-mcp:1.0.0";
+const DEFAULT_IMAGE = "yuque-web-mcp:1.2.0";
 
 export interface InstanceRecord {
   id: string;

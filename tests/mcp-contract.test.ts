@@ -8,7 +8,7 @@ import {
 } from "../src/mcp.js";
 
 describe("MCP public surface", () => {
-  it("exposes exactly the 36 v1 tools with capability discovery", async () => {
+  it("exposes exactly the 38 v1.2 tools with capability discovery", async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const server = createMcpServer("employee.a", {} as never);
@@ -27,7 +27,7 @@ describe("MCP public surface", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual(
       toolDefinitions.map((tool) => tool.name),
     );
-    expect(result.tools).toHaveLength(36);
+    expect(result.tools).toHaveLength(38);
     expect(result.tools.some((tool) => tool.name === "yuque_list_scopes")).toBe(
       true,
     );
@@ -45,6 +45,8 @@ describe("MCP public surface", () => {
         "yuque_list_doc_versions",
         "yuque_get_doc_version",
         "yuque_preview_restore_doc_version",
+        "yuque_get_export_options",
+        "yuque_create_export_link",
         "yuque_preview_delete_doc",
         "yuque_preview_delete_sheet",
         "yuque_preview_delete_book",
@@ -61,6 +63,10 @@ describe("MCP public surface", () => {
     expect(
       result.tools.find((tool) => tool.name === "yuque_get_doc")?.description,
     ).toContain("第一项必须先写完整路径和URL");
+    expect(
+      result.tools.find((tool) => tool.name === "yuque_create_export_link")
+        ?.description,
+    ).toContain("不下载或缓存文件");
     expect(
       result.tools.find((tool) => tool.name === "yuque_search")?.description,
     ).toContain("已验证");
@@ -151,6 +157,119 @@ describe("MCP public surface", () => {
       first.text.indexOf('"body"'),
     );
 
+    await client.close();
+    await server.close();
+  });
+
+  it("lists type-specific formats before returning a native export URL", async () => {
+    const calls: unknown[] = [];
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const server = createMcpServer("employee.a", {
+      client: {
+        getExportOptions: async (...args: unknown[]) => {
+          calls.push(args);
+          return {
+            targetType: "Doc",
+            sourceFormat: "lake",
+            availableFormats: [
+              {
+                format: "word",
+                label: "Word",
+                extension: "docx",
+                browserLoginExpected: false,
+              },
+              {
+                format: "pdf",
+                label: "PDF",
+                extension: "pdf",
+                browserLoginExpected: true,
+              },
+            ],
+            document: {
+              id: "12",
+              title: "Export Doc",
+              url: "https://www.yuque.com/u1/book/doc",
+              bookUrl: "https://www.yuque.com/u1/book",
+              displayPath: "个人：Alice / Export Book / Export Doc",
+              fullPath: ["个人：Alice", "Export Book", "Export Doc"],
+            },
+          };
+        },
+        createExportLink: async (...args: unknown[]) => {
+          calls.push(args);
+          return {
+            targetType: "Doc",
+            format: "pdf",
+            filename: "Export Doc.pdf",
+            downloadUrl:
+              "https://www.yuque.com/attachments/__temp/account/date/object?attachable_id=1&attachable_type=Doc&filename=Export%20Doc.pdf",
+            browserLoginRequired: true,
+            deliveryHost: "www.yuque.com",
+            pollRequests: 3,
+            document: {
+              id: "12",
+              title: "Export Doc",
+              url: "https://www.yuque.com/u1/book/doc",
+              bookUrl: "https://www.yuque.com/u1/book",
+              displayPath: "个人：Alice / Export Book / Export Doc",
+              fullPath: ["个人：Alice", "Export Book", "Export Doc"],
+            },
+          };
+        },
+      },
+    } as never);
+    const client = new Client({ name: "test-client", version: "1.2.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const optionsResult = await client.callTool({
+      name: "yuque_get_export_options",
+      arguments: { doc_url: "https://www.yuque.com/u1/book/doc" },
+    });
+    expect(optionsResult.isError).not.toBe(true);
+    const optionsContent = (
+      optionsResult as { content: Array<{ type: string; text?: string }> }
+    ).content[0];
+    expect(JSON.parse(optionsContent?.text ?? "{}")).toMatchObject({
+      target_type: "Doc",
+      export_started: false,
+      available_formats: [{ format: "word" }, { format: "pdf" }],
+      document: {
+        display_path: "个人：Alice / Export Book / Export Doc",
+      },
+    });
+
+    const result = await client.callTool({
+      name: "yuque_create_export_link",
+      arguments: {
+        doc_url: "https://www.yuque.com/u1/book/doc",
+        format: "pdf",
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    const content = (
+      result as { content: Array<{ type: string; text?: string }> }
+    ).content[0];
+    const payload = JSON.parse(content?.text ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(payload).toMatchObject({
+      format: "pdf",
+      target_type: "Doc",
+      filename: "Export Doc.pdf",
+      browser_login_required: true,
+      poll_requests: 3,
+      file_downloaded_by_mcp: false,
+      document: {
+        display_path: "个人：Alice / Export Book / Export Doc",
+      },
+    });
+    expect(calls).toEqual([
+      ["employee.a", "https://www.yuque.com/u1/book/doc"],
+      ["employee.a", "https://www.yuque.com/u1/book/doc", "pdf"],
+    ]);
     await client.close();
     await server.close();
   });
