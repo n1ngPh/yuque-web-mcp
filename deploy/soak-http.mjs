@@ -29,7 +29,7 @@ const minimumCycleRatioPercent = percentageInteger(
   "SOAK_MIN_CYCLE_RATIO_PERCENT",
   95,
 );
-const expectedToolCount = positiveInteger("SOAK_EXPECTED_TOOL_COUNT", 38);
+const expectedToolCount = positiveInteger("SOAK_EXPECTED_TOOL_COUNT", 40);
 const expectedServerVersion =
   process.env.SOAK_EXPECTED_SERVER_VERSION || packageVersion;
 const allowedBookUrl = optionalExactBookUrl(process.env.SOAK_ALLOWED_BOOK_URL);

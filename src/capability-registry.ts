@@ -26,6 +26,8 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
   available("yuque_auth_status", local),
   available("yuque_login_begin", local),
   available("yuque_login_status", local),
+  available("yuque_login_begin_sms", local),
+  available("yuque_login_submit_sms", local),
   available("yuque_logout", local),
   available("yuque_get_user", local),
   available("yuque_list_scopes", personal),
@@ -97,6 +99,25 @@ export function buildCapabilityReport(
         (config.writeBookAllowlist?.length ?? 0) > 0,
     },
     capabilities: CAPABILITY_POLICIES.map((policy): CapabilityStatus => {
+      if (
+        policy.tool === "yuque_login_begin_sms" ||
+        policy.tool === "yuque_login_submit_sms"
+      ) {
+        if (config.smsCaptchaEnabled === true) {
+          const { reasonCode: _reasonCode, ...enabledPolicy } = policy;
+          return {
+            ...enabledPolicy,
+            availability: "available",
+            required_write_mode: "none",
+          };
+        }
+        return {
+          ...policy,
+          availability: "disabled",
+          required_write_mode: "none",
+          reasonCode: "sms_captcha_disabled",
+        };
+      }
       if (policy.tool === "yuque_confirm_change") {
         if (config.writeKillSwitch === true) {
           return {

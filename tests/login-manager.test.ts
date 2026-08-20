@@ -155,6 +155,121 @@ describe("QR login provider boundary", () => {
   });
 });
 
+describe("SMS login flow", () => {
+  it("sends a code through the sidecar and lands in waiting_sms", async () => {
+    const captcha = smsCaptcha({ sendSmsOk: true });
+    const sessions = smsSessions();
+    const manager = smsManager(captcha, sessions);
+
+    const status = await manager.beginSms("employee.a", "13800138000");
+
+    expect(captcha.sendSms).toHaveBeenCalledWith("13800138000");
+    expect(status.state).toBe("waiting_sms");
+    expect(status.message).toBe("短信验证码已发送，请查收");
+    expect(status.loginId).toBeTruthy();
+    expect(sessions.save).not.toHaveBeenCalled();
+  });
+
+  it("marks a rejected send as failed without persisting a session", async () => {
+    const captcha = smsCaptcha({ sendSmsOk: false, status: 429 });
+    const sessions = smsSessions();
+    const manager = smsManager(captcha, sessions);
+
+    const status = await manager.beginSms("employee.a", "13800138000");
+
+    expect(status.state).toBe("failed");
+    expect(status.message).toBe("发送过于频繁，请稍后再试");
+    expect(sessions.save).not.toHaveBeenCalled();
+  });
+
+  it("submits the code and saves the session in tough-cookie shape", async () => {
+    const captcha = smsCaptcha({ sendSmsOk: true, loginOk: true });
+    const sessions = smsSessions();
+    const manager = smsManager(captcha, sessions);
+
+    const sent = await manager.beginSms("employee.a", "13800138000");
+    const result = await manager.submitSms(
+      "employee.a",
+      sent.loginId,
+      "123456",
+    );
+
+    expect(captcha.login).toHaveBeenCalledWith("13800138000", "123456");
+    expect(result.state).toBe("success");
+    expect(result.account).toMatchObject({
+      id: "71172175",
+      login: "u8890",
+      name: "8890",
+    });
+
+    const saved = sessions.save.mock.calls[0]![1];
+    expect(saved.csrfToken).toBe("csrf-token-value");
+    expect(saved.account).toMatchObject({ id: "71172175", login: "u8890" });
+    expect(saved.cookies.cookies).toHaveLength(1);
+    expect(saved.cookies.cookies[0]).toMatchObject({
+      key: "_yuque_session",
+      value: "abc",
+      domain: "yuque.com",
+      path: "/",
+      secure: true,
+      httpOnly: true,
+      sameSite: "none",
+      hostOnly: false,
+    });
+    expect(saved.savedAt).toEqual(expect.any(String));
+  });
+
+  it("rejects submission for an unknown attempt", async () => {
+    const manager = smsManager(smsCaptcha({}), smsSessions());
+    await expect(
+      manager.submitSms("employee.a", "missing", "123456"),
+    ).rejects.toThrow("not found");
+  });
+
+  it("returns to waiting_sms after a failed verification and keeps state", async () => {
+    const captcha = smsCaptcha({
+      sendSmsOk: true,
+      loginOk: false,
+      status: 400,
+      body: '{"message":"验证码错误"}',
+    });
+    const sessions = smsSessions();
+    const manager = smsManager(captcha, sessions);
+
+    const sent = await manager.beginSms("employee.a", "13800138000");
+    await expect(
+      manager.submitSms("employee.a", sent.loginId, "000000"),
+    ).rejects.toThrow("验证码错误");
+
+    expect(sessions.save).not.toHaveBeenCalled();
+    expect(manager.status("employee.a", sent.loginId).state).toBe(
+      "waiting_sms",
+    );
+  });
+
+  it("caps concurrent login flows across employees", async () => {
+    const captcha = smsCaptcha({ sendSmsOk: true });
+    const manager = new LoginManager(
+      {
+        loginTtlSeconds: 300,
+        publicBaseUrl: "http://127.0.0.1:18082",
+        personalYuqueHost: "https://www.yuque.com",
+        yuqueHost: "https://www.yuque.com",
+        organization: "",
+        chromiumExecutable: "/not-used",
+        maxConcurrentLogins: 1,
+      } as never,
+      smsSessions() as never,
+      captcha as never,
+    );
+
+    await manager.beginSms("employee.a", "13800138000");
+    await expect(manager.beginSms("employee.b", "13800138001")).rejects.toThrow(
+      "At most 1 login flows",
+    );
+  });
+});
+
 function loginManager(): LoginManager {
   return new LoginManager(
     {
@@ -209,4 +324,72 @@ function registerAttempt(
   };
   internal.attemptsById.set(attempt.loginId, attempt);
   internal.attemptsByCode.set(attempt.publicCode, attempt);
+}
+
+interface SmsCaptchaOptions {
+  sendSmsOk?: boolean;
+  status?: number;
+  body?: string;
+  loginOk?: boolean;
+}
+
+function smsCaptcha(options: SmsCaptchaOptions) {
+  return {
+    sendSms: vi.fn().mockResolvedValue({
+      ok: options.sendSmsOk ?? true,
+      status: options.status ?? 200,
+      body: options.body ?? "{}",
+    }),
+    login: vi.fn().mockResolvedValue({
+      ok: options.loginOk ?? true,
+      status: options.status ?? 200,
+      body: options.body ?? "{}",
+      account:
+        options.loginOk === false
+          ? null
+          : {
+              id: "71172175",
+              login: "u8890",
+              name: "8890",
+            },
+      cookies:
+        options.loginOk === false
+          ? []
+          : [
+              {
+                name: "_yuque_session",
+                value: "abc",
+                domain: ".yuque.com",
+                path: "/",
+                expires: 1893456000,
+                httpOnly: true,
+                secure: true,
+                sameSite: "None",
+              },
+            ],
+      csrfToken: "csrf-token-value",
+    }),
+  };
+}
+
+function smsSessions() {
+  return { save: vi.fn().mockResolvedValue(undefined) };
+}
+
+function smsManager(
+  captcha: ReturnType<typeof smsCaptcha>,
+  sessions: ReturnType<typeof smsSessions>,
+) {
+  return new LoginManager(
+    {
+      loginTtlSeconds: 300,
+      publicBaseUrl: "http://127.0.0.1:18082",
+      personalYuqueHost: "https://www.yuque.com",
+      yuqueHost: "https://www.yuque.com",
+      organization: "",
+      chromiumExecutable: "/not-used",
+    } as never,
+    sessions as never,
+    captcha as never,
+  );
 }

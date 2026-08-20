@@ -1,0 +1,10 @@
+{
+  "name": "captcha-node-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "data/arg/trackId encryption for the aliyun captcha verify step",
+  "type": "commonjs",
+  "dependencies": {
+    "crypto-js": "^4.2.0"
+  }
+}

@@ -1,6 +1,6 @@
 # Yuque Web MCP
 
-一个面向自托管场景的语雀网页会话 MCP 服务。它让用户通过微信、钉钉或支付宝官方二维码建立自己的语雀登录会话，并向支持 Streamable HTTP 的智能体提供知识库定位、搜索、文档与表格安全读写等能力。
+一个面向自托管场景的语雀网页会话 MCP 服务。它让用户通过微信、钉钉或支付宝官方二维码建立自己的语雀登录会话（可选启用短信验证码登录），并向支持 Streamable HTTP 的智能体提供知识库定位、搜索、文档与表格安全读写等能力。
 
 > 本项目是非官方实验项目，与语雀官方无隶属关系。网页内部接口可能随前端升级变化；项目对未完成验证的能力默认失败关闭，不会根据猜测发送写请求。
 
@@ -9,6 +9,7 @@
 | 能力                                                            | 当前状态                                                     |
 | --------------------------------------------------------------- | ------------------------------------------------------------ |
 | 微信、钉钉、支付宝扫码登录，登录状态检查和本地退出              | 可用                                                         |
+| 短信验证码登录（含滑块验证码自动处理）                            | 可选；默认关闭，需 `SMS_CAPTCHA_ENABLED=true` 及 Python + DrissionPage + Chrome |
 | 个人空间与组织空间发现                                          | 可用                                                         |
 | 自有/受邀知识库、角色、目录和文档位置索引                       | 已验证；共享路径使用`共享：<所有者>`消歧                     |
 | 文档搜索、完整路径与 URL 消歧                                   | 可用                                                         |
@@ -26,7 +27,7 @@
 | 私有知识库 reader/editor 协作者管理                             | 已验证；默认关闭，需精确白名单及`best_effort`确认            |
 | Doc、Sheet 和知识库整对象删除                                   | 个人Host已验证；默认关闭，需显式开关、精确白名单和二次确认   |
 
-服务目前注册37个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
+服务目前注册40个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
 
 ## 数据安全
 
@@ -47,6 +48,7 @@
 - Node.js 22 或更高版本（推荐当前 LTS）
 - Chrome、Chromium 或 Microsoft Edge
 - 支持 MCP Streamable HTTP 的客户端
+- 可选（短信验证码登录）：Python 3.9+ 与 DrissionPage、真实 Chrome/Chromium，以及 `captcha/node_harness` 的 `crypto-js` 依赖
 
 ## 本地启动
 
@@ -96,11 +98,23 @@ npm run local:start
 4. 调用 `yuque_login_status` 等待成功。
 5. 登录成功后使用读取和定位工具；业务请求由服务端 HTTP 客户端完成。
 
-个人空间扫码登录目前只支持已经注册并绑定手机号的语雀账号。企业或组织空间能够通过钉钉登录，不代表个人空间账号已经完成手机号绑定；若扫码后出现绑定页面，请先在语雀官网完成个人账号注册与手机号绑定。项目不提供短信验证码、账号密码或绕过滑块的能力。
+个人空间扫码登录目前只支持已经注册并绑定手机号的语雀账号。企业或组织空间能够通过钉钉登录，不代表个人空间账号已经完成手机号绑定；若扫码后出现绑定页面，请先在语雀官网完成个人账号注册与手机号绑定。账号密码登录不在支持范围内。
+
+### 短信验证码登录（可选）
+
+短信验证码登录（含阿里云滑块验证码自动处理）默认关闭。启用需满足：
+
+1. 设置 `SMS_CAPTCHA_ENABLED=true`。
+2. 安装 Python 3.9+ 与 `DrissionPage`（`pip install -r captcha/requirements.txt`）。
+3. 提供真实 Chrome/Chromium（`CAPTCHA_BROWSER_PATH`），DrissionPage 通过 CDP 直连真实浏览器，不使用 webdriver。
+4. 安装 `captcha/node_harness` 依赖：`cd captcha/node_harness && npm install`（仅 `crypto-js`）。
+5. 默认直连，无需代理。仅当验证码被风控拒绝（拿不到 `certifyId`，通常返回 `F001`）时，服务会提示并建议设置 `CAPTCHA_PROXY` / `YUQUE_HTTPS_PROXY` 切换到干净的出口代理后重试。
+
+启用后，未登录时依次调用 `yuque_login_begin_sms {phone}` 发送验证码、`yuque_login_submit_sms {login_id, code}` 提交验证码。短信登录依赖语雀网页接口，属未公开接口，与扫码登录一样可能随前端升级失效。
 
 ## 常用工具
 
-- 认证：`yuque_auth_status`、`yuque_login_begin`、`yuque_login_status`、`yuque_logout`
+- 认证：`yuque_auth_status`、`yuque_login_begin`、`yuque_login_status`、`yuque_login_begin_sms`、`yuque_login_submit_sms`、`yuque_logout`
 - 能力：`yuque_get_capabilities`
 - 空间与知识库：`yuque_list_scopes`、`yuque_list_books`、`yuque_get_book`、`yuque_preview_create_book`、`yuque_preview_update_book`
 - 协作者：`yuque_list_book_collaborators`、`yuque_preview_change_book_collaborator`；邀请后接收方仍需在语雀确认加入
@@ -208,7 +222,7 @@ npm run check
 
 普通自动测试使用脱敏 fixture，不访问真实语雀。任何真实写入验证都应在专用测试知识库中人工启用，并在执行前确认目标完整路径、账号和 Host。
 
-部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、37个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应员工重新扫码即可恢复。
+部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、40个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应员工重新扫码即可恢复。
 
 ```bash
 MCP_ENV_FILE=/absolute/private/service.env \
@@ -218,7 +232,7 @@ npm run soak:http
 
 可通过`SOAK_DURATION_SECONDS`设置诊断时长；中断的记录只代表实际已运行区间，不得描述为完整耐久测试。
 
-公开仓库不包含内部接口研究记录、真实环境验收材料、账号信息或部署文档。运行所需的契约清单只记录程序必须使用的结构化能力门禁，不包含 Cookie、Token、手机号、验证码、文档正文或原始响应。
+公开仓库不包含真实环境验收材料、账号信息或部署文档。运行所需的契约清单只记录程序必须使用的结构化能力门禁，不包含 Cookie、Token、手机号、短信验证码、文档正文或原始响应。短信登录所需的验证码侧车（`captcha/`，含 DrissionPage 求解器与反混淆 SDK）已随仓库打包，但该能力默认关闭。
 
 ## 当前限制
 

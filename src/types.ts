@@ -225,7 +225,13 @@ export interface PendingChangePayload {
 }
 
 export interface LoginStatus {
-  state: "starting" | "waiting_scan" | "success" | "expired" | "failed";
+  state:
+    | "starting"
+    | "waiting_scan"
+    | "waiting_sms"
+    | "success"
+    | "expired"
+    | "failed";
   loginId: string;
   expiresAt: string;
   account?: YuqueAccount;

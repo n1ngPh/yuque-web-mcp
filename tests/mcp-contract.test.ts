@@ -8,7 +8,7 @@ import {
 } from "../src/mcp.js";
 
 describe("MCP public surface", () => {
-  it("exposes exactly the 38 v1.2 tools with capability discovery", async () => {
+  it("exposes exactly the 40 v1.2 tools with capability discovery", async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const server = createMcpServer("employee.a", {} as never);
@@ -27,7 +27,7 @@ describe("MCP public surface", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual(
       toolDefinitions.map((tool) => tool.name),
     );
-    expect(result.tools).toHaveLength(38);
+    expect(result.tools).toHaveLength(40);
     expect(result.tools.some((tool) => tool.name === "yuque_list_scopes")).toBe(
       true,
     );

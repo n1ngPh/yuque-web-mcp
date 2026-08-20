@@ -69,6 +69,10 @@ export interface AppConfig {
   allowInsecureHttp?: boolean;
   yuqueHttpsProxy?: string;
   yuqueCaFile?: string;
+  smsCaptchaEnabled?: boolean;
+  captchaPythonPath?: string;
+  captchaSolvePath?: string;
+  captchaBrowserPath?: string;
 }
 
 function decode32ByteSecret(name: string): Buffer {
@@ -140,6 +144,12 @@ export function loadConfig(): AppConfig {
     );
   }
 
+  const chromiumExecutable =
+    process.env.CHROMIUM_EXECUTABLE?.trim() || "/usr/bin/chromium";
+  const captchaSolvePath = resolve(
+    process.env.CAPTCHA_SOLVE_PATH?.trim() || "./captcha/solve.py",
+  );
+
   return {
     ownerId,
     mcpBearerToken,
@@ -155,8 +165,7 @@ export function loadConfig(): AppConfig {
     allowedHosts,
     allowedOrigins: splitList(process.env.MCP_ALLOWED_ORIGINS),
     encryptionKey: decode32ByteSecret("SESSION_ENCRYPTION_KEY"),
-    chromiumExecutable:
-      process.env.CHROMIUM_EXECUTABLE?.trim() || "/usr/bin/chromium",
+    chromiumExecutable,
     loginTtlSeconds: positiveInt("LOGIN_TTL_SECONDS", 300),
     changeTtlSeconds: positiveInt("CHANGE_TTL_SECONDS", 600),
     requestTimeoutMs: positiveInt("YUQUE_REQUEST_TIMEOUT_MS", 15000),
@@ -197,6 +206,11 @@ export function loadConfig(): AppConfig {
     allowInsecureHttp,
     yuqueHttpsProxy: optionalProxyUrl(process.env.YUQUE_HTTPS_PROXY),
     yuqueCaFile: optionalCaFile(process.env.YUQUE_CA_FILE),
+    smsCaptchaEnabled: strictBoolean("SMS_CAPTCHA_ENABLED", false),
+    captchaPythonPath: process.env.CAPTCHA_PYTHON_PATH?.trim() || "python3",
+    captchaSolvePath,
+    captchaBrowserPath:
+      process.env.CAPTCHA_BROWSER_PATH?.trim() || chromiumExecutable,
   };
 }
 

@@ -125,7 +125,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_login_begin",
     description:
-      "为当前员工启动隔离的一次性扫码登录，返回 login_id、临时登录页和官方扫码页面截图。provider支持dingtalk、wechat、alipay，默认dingtalk；不提供密码、短信验证码或滑块绕过。之后用 yuque_login_status 轮询。",
+      "为当前员工启动隔离的一次性扫码登录，返回 login_id、临时登录页和官方扫码页面截图。provider支持dingtalk、wechat、alipay，默认dingtalk。之后用 yuque_login_status 轮询。短信验证码登录请使用 yuque_login_begin_sms（需部署者启用）。",
     inputSchema: {
       type: "object",
       properties: {
@@ -149,6 +149,33 @@ export const toolDefinitions: ToolDefinition[] = [
         login_id: stringProperty("Login ID returned by yuque_login_begin."),
       },
       required: ["login_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "yuque_login_begin_sms",
+    description:
+      "为当前员工发送短信验证码以登录语雀，服务自动处理滑块验证码。需要部署者启用 SMS_CAPTCHA_ENABLED=true 并配置 Python + DrissionPage + Chrome。返回 login_id，之后调用 yuque_login_submit_sms 提交验证码。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phone: stringProperty("手机号，用于接收短信验证码。"),
+      },
+      required: ["phone"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "yuque_login_submit_sms",
+    description:
+      "提交短信验证码完成语雀登录。成功后浏览器关闭，后续文档请求使用加密保存的独立网页会话。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        login_id: stringProperty("Login ID returned by yuque_login_begin_sms."),
+        code: stringProperty("短信验证码。"),
+      },
+      required: ["login_id", "code"],
       additionalProperties: false,
     },
   },
@@ -822,6 +849,23 @@ async function callTool(
     }
     case "yuque_login_status":
       return deps.login.status(employeeId, requireString(args, "login_id"));
+    case "yuque_login_begin_sms": {
+      if (deps.config.smsCaptchaEnabled !== true)
+        throw new Error("短信登录未启用（SMS_CAPTCHA_ENABLED=false）");
+      return await deps.login.beginSms(
+        employeeId,
+        requireString(args, "phone"),
+      );
+    }
+    case "yuque_login_submit_sms": {
+      if (deps.config.smsCaptchaEnabled !== true)
+        throw new Error("短信登录未启用（SMS_CAPTCHA_ENABLED=false）");
+      return await deps.login.submitSms(
+        employeeId,
+        requireString(args, "login_id"),
+        requireString(args, "code"),
+      );
+    }
     case "yuque_logout":
       await deps.login.cancelEmployee(employeeId);
       await deps.client.logout(employeeId);

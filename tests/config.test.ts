@@ -8,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { loadConfig } from "../src/config.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -17,6 +17,30 @@ describe("production configuration", () => {
   it("defaults write consistency to strict", () => {
     requiredEnvironment();
     expect(loadConfig().writeConsistencyMode).toBe("strict");
+  });
+
+  it("parses the optional SMS captcha sidecar configuration", () => {
+    requiredEnvironment();
+    const defaults = loadConfig();
+    expect(defaults.smsCaptchaEnabled).toBe(false);
+    expect(defaults.captchaPythonPath).toBe("python3");
+    expect(defaults.captchaSolvePath).toBe(resolve("captcha/solve.py"));
+    expect(defaults.captchaBrowserPath).toBe("/usr/bin/chromium");
+
+    vi.stubEnv("SMS_CAPTCHA_ENABLED", "true");
+    vi.stubEnv("CAPTCHA_PYTHON_PATH", "/opt/captcha-venv/bin/python");
+    vi.stubEnv("CAPTCHA_SOLVE_PATH", "/app/captcha/solve.py");
+    vi.stubEnv("CAPTCHA_BROWSER_PATH", "/usr/bin/google-chrome");
+    const configured = loadConfig();
+    expect(configured.smsCaptchaEnabled).toBe(true);
+    expect(configured.captchaPythonPath).toBe("/opt/captcha-venv/bin/python");
+    expect(configured.captchaSolvePath).toBe("/app/captcha/solve.py");
+    expect(configured.captchaBrowserPath).toBe("/usr/bin/google-chrome");
+
+    vi.stubEnv("SMS_CAPTCHA_ENABLED", "not-a-bool");
+    expect(() => loadConfig()).toThrow(
+      "SMS_CAPTCHA_ENABLED must be true or false",
+    );
   });
 
   it("accepts only explicit strict or best_effort values", () => {

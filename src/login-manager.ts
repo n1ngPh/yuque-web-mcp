@@ -5,7 +5,12 @@ import {
   type Page,
 } from "playwright-core";
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { AppConfig } from "./config.js";
+import {
+  PinnedCaptchaSidecar,
+  type CaptchaSidecar,
+} from "./captcha-sidecar.js";
 import { randomBase64Url } from "./crypto.js";
 import type { SessionStore } from "./session-store.js";
 import type { LoginStatus, YuqueAccount } from "./types.js";
@@ -15,7 +20,9 @@ interface LoginAttempt {
   employeeId: string;
   loginId: string;
   publicCode: string;
-  provider: LoginProvider;
+  provider?: LoginProvider;
+  phone?: string;
+  smsInFlight?: boolean;
   expiresAt: Date;
   state: LoginStatus["state"];
   screenshot?: Buffer;
@@ -29,6 +36,14 @@ interface LoginAttempt {
 
 export const LOGIN_PROVIDERS = ["dingtalk", "wechat", "alipay"] as const;
 export type LoginProvider = (typeof LOGIN_PROVIDERS)[number];
+
+const ACTIVE_LOGIN_STATES: LoginStatus["state"][] = [
+  "starting",
+  "waiting_scan",
+  "waiting_sms",
+];
+
+const SMS_SEND_WAIT_MS = 120_000;
 
 export const CHROMIUM_LAUNCH_ARGS = ["--disable-dev-shm-usage"] as const;
 // Playwright defaults chromiumSandbox to false for library launches and would
@@ -57,10 +72,24 @@ export class LoginManager {
   private readonly attemptsById = new Map<string, LoginAttempt>();
   private readonly attemptsByCode = new Map<string, LoginAttempt>();
 
+  private readonly captcha: CaptchaSidecar;
+
   constructor(
     private readonly config: AppConfig,
     private readonly sessions: SessionStore,
-  ) {}
+    captcha?: CaptchaSidecar,
+  ) {
+    this.captcha =
+      captcha ??
+      new PinnedCaptchaSidecar({
+        pythonPath: this.config.captchaPythonPath ?? "python3",
+        solvePath:
+          this.config.captchaSolvePath ??
+          resolve(process.cwd(), "captcha/solve.py"),
+        browserPath: this.config.captchaBrowserPath,
+        proxyUrl: this.config.yuqueHttpsProxy,
+      });
+  }
 
   async begin(
     employeeId: string,
@@ -74,14 +103,14 @@ export class LoginManager {
     const existing = [...this.attemptsById.values()].find(
       (attempt) =>
         attempt.employeeId === employeeId &&
-        ["starting", "waiting_scan"].includes(attempt.state) &&
+        ACTIVE_LOGIN_STATES.includes(attempt.state) &&
         attempt.expiresAt > new Date(),
     );
     if (existing?.provider === provider) return this.describeAttempt(existing);
     if (existing) await this.closeAttempt(existing);
 
     const activeCount = [...this.attemptsById.values()].filter((attempt) =>
-      ["starting", "waiting_scan"].includes(attempt.state),
+      ACTIVE_LOGIN_STATES.includes(attempt.state),
     ).length;
     const maximum = this.config.maxConcurrentLogins ?? 2;
     if (activeCount >= maximum)
@@ -117,6 +146,92 @@ export class LoginManager {
     return toStatus(attempt);
   }
 
+  async beginSms(employeeId: string, phone: string): Promise<LoginStatus> {
+    const existing = [...this.attemptsById.values()].find(
+      (attempt) =>
+        attempt.employeeId === employeeId &&
+        ACTIVE_LOGIN_STATES.includes(attempt.state) &&
+        attempt.expiresAt > new Date(),
+    );
+    if (existing?.phone === phone) return toStatus(existing);
+    if (existing) await this.closeAttempt(existing);
+
+    const activeCount = [...this.attemptsById.values()].filter((attempt) =>
+      ACTIVE_LOGIN_STATES.includes(attempt.state),
+    ).length;
+    const maximum = this.config.maxConcurrentLogins ?? 2;
+    if (activeCount >= maximum)
+      throw new Error(
+        `At most ${String(maximum)} login flows may run concurrently`,
+      );
+
+    const attempt: LoginAttempt = {
+      employeeId,
+      loginId: randomUUID(),
+      publicCode: randomBase64Url(32),
+      phone,
+      expiresAt: new Date(Date.now() + this.config.loginTtlSeconds * 1000),
+      state: "starting",
+      interactionQueue: Promise.resolve(),
+    };
+    this.attemptsById.set(attempt.loginId, attempt);
+    void this.runSmsSend(attempt, phone);
+
+    await waitFor(() => attempt.state !== "starting", SMS_SEND_WAIT_MS);
+    return toStatus(attempt);
+  }
+
+  async submitSms(
+    employeeId: string,
+    loginId: string,
+    code: string,
+  ): Promise<LoginStatus> {
+    const attempt = this.attemptsById.get(loginId);
+    if (!attempt || attempt.employeeId !== employeeId)
+      throw new Error("Login attempt not found");
+    this.expireIfNeeded(attempt);
+    if (attempt.state !== "waiting_sms")
+      throw new Error("短信验证码尚未发送或登录流程已结束");
+    const phone = attempt.phone;
+    if (!phone) throw new Error("Login attempt is missing phone");
+    if (attempt.smsInFlight) throw new Error("短信验证码正在校验中");
+    attempt.smsInFlight = true;
+    try {
+      const result = await this.captcha.login(phone, code);
+      if (!result.ok || !result.account)
+        throw new Error(smsLoginError(result.status, result.body));
+      const account: YuqueAccount = {
+        id: result.account.id,
+        login: result.account.login,
+        ...(result.account.name ? { name: result.account.name } : {}),
+      };
+      await this.sessions.save(attempt.employeeId, {
+        cookies: {
+          version: "tough-cookie@6",
+          storeType: "MemoryCookieStore",
+          rejectPublicSuffixes: true,
+          enableLooseMode: false,
+          allowSpecialUseDomain: true,
+          prefixSecurity: "silent",
+          cookies: result.cookies.map(toToughCookieJson),
+        },
+        csrfToken: result.csrfToken,
+        account,
+        savedAt: new Date().toISOString(),
+      });
+      attempt.state = "success";
+      attempt.account = account;
+      attempt.message = "登录成功";
+      return toStatus(attempt);
+    } catch (error) {
+      attempt.state = "waiting_sms";
+      attempt.message = error instanceof Error ? error.message : "登录失败";
+      throw error;
+    } finally {
+      attempt.smsInFlight = false;
+    }
+  }
+
   statusByPublicCode(code: string): LoginStatus | undefined {
     const attempt = this.publicAttempt(code);
     if (!attempt) return undefined;
@@ -132,7 +247,7 @@ export class LoginManager {
   screenshotByPublicCode(code: string): Buffer | undefined {
     const attempt = this.publicAttempt(code);
     if (!attempt) return undefined;
-    if (!["starting", "waiting_scan"].includes(attempt.state)) return undefined;
+    if (!ACTIVE_LOGIN_STATES.includes(attempt.state)) return undefined;
     return attempt.screenshot;
   }
 
@@ -203,7 +318,7 @@ export class LoginManager {
         const page = attempt.page;
         if (!page || attempt.state !== "waiting_scan")
           throw new Error("Login page is not available");
-        await page.goto(this.loginTarget(attempt.provider), {
+        await page.goto(this.loginTarget(attempt.provider ?? "dingtalk"), {
           waitUntil: "domcontentloaded",
           timeout: 60_000,
         });
@@ -222,6 +337,7 @@ export class LoginManager {
   pageByPublicCode(code: string): string | undefined {
     const attempt = this.publicAttempt(code);
     if (!attempt) return undefined;
+    if (!attempt.provider) return undefined;
     const status = toStatus(attempt);
     return renderLoginPage(code, status, attempt.provider);
   }
@@ -235,7 +351,7 @@ export class LoginManager {
 
   activeCount(): number {
     return [...this.attemptsById.values()].filter((attempt) =>
-      ["starting", "waiting_scan"].includes(attempt.state),
+      ACTIVE_LOGIN_STATES.includes(attempt.state),
     ).length;
   }
 
@@ -256,9 +372,25 @@ export class LoginManager {
     return {
       status: toStatus(attempt),
       loginUrl: `${this.config.publicBaseUrl}/login/${attempt.publicCode}`,
-      provider: attempt.provider,
+      provider: attempt.provider ?? "dingtalk",
       ...(attempt.screenshot ? { screenshot: attempt.screenshot } : {}),
     };
+  }
+
+  private async runSmsSend(
+    attempt: LoginAttempt,
+    phone: string,
+  ): Promise<void> {
+    try {
+      attempt.message = "正在通过验证并发送短信…";
+      const result = await this.captcha.sendSms(phone);
+      if (!result.ok) throw new Error(smsSendError(result.status, result.body));
+      attempt.state = "waiting_sms";
+      attempt.message = "短信验证码已发送，请查收";
+    } catch (error) {
+      attempt.state = "failed";
+      attempt.message = error instanceof Error ? error.message : "短信发送失败";
+    }
   }
 
   private async run(attempt: LoginAttempt): Promise<void> {
@@ -269,7 +401,7 @@ export class LoginManager {
       attempt.context = context;
       const page = await context.newPage();
       attempt.page = page;
-      await page.goto(this.loginTarget(attempt.provider), {
+      await page.goto(this.loginTarget(attempt.provider ?? "dingtalk"), {
         waitUntil: "domcontentloaded",
         timeout: 60_000,
       });
@@ -307,10 +439,13 @@ export class LoginManager {
           attempt.message = "二维码页面正在自动刷新，请稍候";
           if (consecutivePollFailures >= 3) {
             await this.enqueueInteraction(attempt, async () => {
-              await page.goto(this.loginTarget(attempt.provider), {
-                waitUntil: "domcontentloaded",
-                timeout: 60_000,
-              });
+              await page.goto(
+                this.loginTarget(attempt.provider ?? "dingtalk"),
+                {
+                  waitUntil: "domcontentloaded",
+                  timeout: 60_000,
+                },
+              );
               attempt.screenshot = await page.screenshot({
                 type: "png",
                 fullPage: false,
@@ -360,7 +495,7 @@ export class LoginManager {
   private expireIfNeeded(attempt: LoginAttempt): void {
     if (
       attempt.expiresAt <= new Date() &&
-      ["starting", "waiting_scan"].includes(attempt.state)
+      ACTIVE_LOGIN_STATES.includes(attempt.state)
     ) {
       attempt.state = "expired";
       attempt.message = "登录页面已过期";
@@ -380,7 +515,7 @@ export class LoginManager {
   }
 
   private async closeAttempt(attempt: LoginAttempt): Promise<void> {
-    if (["starting", "waiting_scan"].includes(attempt.state)) {
+    if (ACTIVE_LOGIN_STATES.includes(attempt.state)) {
       attempt.state = "failed";
       attempt.message = "登录已取消";
     }
@@ -442,6 +577,7 @@ export function renderLoginPage(
   const stateLabels: Record<LoginStatus["state"], string> = {
     starting: "正在准备安全登录",
     waiting_scan: "等待扫码",
+    waiting_sms: "等待短信验证码",
     success: "登录成功",
     expired: "登录页已过期",
     failed: "登录失败",
@@ -474,7 +610,7 @@ button{font:inherit}.shell{width:min(920px,100%);margin:0 auto;background:rgba(2
 <footer class="footer"><strong>登录页有效期至 ${escapeHtml(expiresAt)}</strong><span>如果不是你发起的登录，请直接关闭页面。</span></footer>
 </main>
 <script>
-const base='/login/${encodedCode}';const screen=document.getElementById('screen');const refreshButton=document.getElementById('refresh-qr');const notice=document.getElementById('notice');const statusElement=document.getElementById('status');const loginFlow=document.getElementById('login-flow');const successPanel=document.getElementById('success-panel');const stateLabels={starting:'正在准备安全登录',waiting_scan:'等待扫码',success:'登录成功',expired:'登录页已过期',failed:'登录失败'};let switching=false;let refreshing=false;let imageFailures=0;let imageRetryTimer;let statusTimer;let lastImageReload=Date.now();
+const base='/login/${encodedCode}';const screen=document.getElementById('screen');const refreshButton=document.getElementById('refresh-qr');const notice=document.getElementById('notice');const statusElement=document.getElementById('status');const loginFlow=document.getElementById('login-flow');const successPanel=document.getElementById('success-panel');const stateLabels={starting:'正在准备安全登录',waiting_scan:'等待扫码',waiting_sms:'等待短信验证码',success:'登录成功',expired:'登录页已过期',failed:'登录失败'};let switching=false;let refreshing=false;let imageFailures=0;let imageRetryTimer;let statusTimer;let lastImageReload=Date.now();
 function reloadImage(){if(document.body.dataset.loginState==='success'||document.body.dataset.loginState==='expired')return;lastImageReload=Date.now();screen.src=base+'/image?t='+Date.now()}
 function applyStatus(state,message){document.body.dataset.loginState=state;statusElement.lastElementChild.textContent='状态：'+(stateLabels[state]||state)+(message?' — '+message:'');const complete=state==='success';loginFlow.hidden=complete;successPanel.hidden=!complete;refreshButton.disabled=complete||state==='expired';document.querySelectorAll('[data-provider]').forEach(button=>button.disabled=switching||refreshing||state!=='waiting_scan');if(complete){notice.textContent='';if(statusTimer)clearInterval(statusTimer)}else if(state==='expired'){notice.textContent=message||'链接已过期，请返回智能体重新发起登录。';if(statusTimer)clearInterval(statusTimer)}else if(state==='failed'){notice.textContent=(message||'二维码生成失败。')+' 可点击“刷新二维码”重试。'}}
 async function selectProvider(provider){if(switching||refreshing)return;switching=true;applyStatus(document.body.dataset.loginState,'正在切换扫码方式…');try{const r=await fetch(base+'/provider',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider})});if(!r.ok){notice.textContent=r.status===409?'登录页暂时不可切换，请稍后重试。':'扫码方式未被接受。';return}document.querySelectorAll('[data-provider]').forEach(button=>{const active=button.dataset.provider===provider;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active))});notice.textContent='已切换，请使用对应应用扫码。';reloadImage()}catch{notice.textContent='无法连接本地登录服务。'}finally{switching=false;applyStatus(document.body.dataset.loginState,'')}}
@@ -524,7 +660,7 @@ function toToughCookieJson(cookie: {
   expires: number;
   httpOnly: boolean;
   secure: boolean;
-  sameSite: "Strict" | "Lax" | "None";
+  sameSite: string;
 }): Record<string, unknown> {
   return {
     key: cookie.name,
@@ -541,6 +677,31 @@ function toToughCookieJson(cookie: {
     creation: new Date().toISOString(),
     lastAccessed: new Date().toISOString(),
   };
+}
+
+function smsSendError(status: number, body: string): string {
+  if (status === 429) return "发送过于频繁，请稍后再试";
+  return extractApiMessage(body, `短信发送失败（HTTP ${String(status)}）`);
+}
+
+function smsLoginError(status: number, body: string): string {
+  return extractApiMessage(body, `登录失败（HTTP ${String(status)}）`);
+}
+
+function extractApiMessage(body: string, fallback: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      const message = record.message ?? record.msg ?? record.error;
+      if (typeof message === "string" && message.trim()) {
+        return message.trim();
+      }
+    }
+  } catch {
+    // Non-JSON response bodies fall through to the generic message.
+  }
+  return fallback;
 }
 
 function toStatus(attempt: LoginAttempt): LoginStatus {
