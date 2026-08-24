@@ -811,7 +811,7 @@ export function createMcpServer(
   return server;
 }
 
-async function callTool(
+export async function callTool(
   employeeId: string,
   name: string,
   args: Record<string, unknown>,

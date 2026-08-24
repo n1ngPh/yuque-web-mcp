@@ -1,6 +1,7 @@
 export interface UserCredentials {
   ownerId: string;
   bearerToken: string;
+  agentId?: string;
 }
 
 export interface YuqueAccount {

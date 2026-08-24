@@ -215,11 +215,13 @@ export function loadConfig(): AppConfig {
 function loadUsers(): UserCredentials[] {
   const file = process.env.MCP_USERS_FILE?.trim();
   if (file) return loadUsersFromFile(file);
+  const agentId = process.env.MCP_AGENT_ID?.trim() || undefined;
   return validateUsers(
     [
       {
         ownerId: required("MCP_OWNER_ID"),
         bearerToken: required("MCP_BEARER_TOKEN"),
+        ...(agentId ? { agentId } : {}),
       },
     ],
     "MCP_OWNER_ID",
@@ -254,6 +256,7 @@ function loadUsersFromFile(file: string): UserCredentials[] {
       ownerId: typeof entry.owner_id === "string" ? entry.owner_id : "",
       bearerToken:
         typeof entry.bearer_token === "string" ? entry.bearer_token : "",
+      agentId: typeof entry.agent_id === "string" ? entry.agent_id : undefined,
     });
   }
   return validateUsers(users, "MCP_USERS_FILE owner_id");
@@ -268,6 +271,7 @@ function validateUsers(
   }
   const seenOwnerIds = new Set<string>();
   const seenTokens = new Set<string>();
+  const seenAgentIds = new Set<string>();
   for (const user of users) {
     if (!/^[A-Za-z0-9._@-]{1,128}$/.test(user.ownerId)) {
       throw new Error(
@@ -276,6 +280,21 @@ function validateUsers(
     }
     if (Buffer.byteLength(user.bearerToken, "utf8") < 32) {
       throw new Error("MCP_BEARER_TOKEN must contain at least 32 bytes");
+    }
+    if (user.agentId !== undefined) {
+      const agentId = user.agentId.trim();
+      if (
+        agentId.length === 0 ||
+        !/^[A-Za-z0-9._-]{1,200}$/.test(agentId)
+      ) {
+        throw new Error(
+          "agent_id must be 1-200 characters from A-Z, a-z, 0-9, . _ -",
+        );
+      }
+      if (seenAgentIds.has(agentId)) {
+        throw new Error(`Duplicate agent_id: ${agentId}`);
+      }
+      seenAgentIds.add(agentId);
     }
     if (seenOwnerIds.has(user.ownerId)) {
       throw new Error(`Duplicate owner_id: ${user.ownerId}`);

@@ -16,6 +16,8 @@ research-output/
 runtime/
 instances/
 /docs/
+/start.sh
+/start-tunnel.sh
 /src/research-capture.ts
 /deploy/personal-*.mjs
 /deploy/repair-*.mjs

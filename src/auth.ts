@@ -7,6 +7,7 @@ export interface AuthenticatedOwner {
 
 export class AuthService {
   private readonly ownerByDigest = new Map<string, string>();
+  private readonly ownerByAgentId = new Map<string, string>();
 
   constructor(users: UserCredentials[]);
   constructor(ownerId: string, bearerToken: string);
@@ -29,6 +30,13 @@ export class AuthService {
         throw new Error("Duplicate bearer token");
       }
       this.ownerByDigest.set(digest, user.ownerId);
+      if (user.agentId) {
+        const normalized = normalizeAgentId(user.agentId);
+        if (this.ownerByAgentId.has(normalized)) {
+          throw new Error("Duplicate agent_id");
+        }
+        this.ownerByAgentId.set(normalized, user.ownerId);
+      }
     }
   }
 
@@ -36,8 +44,17 @@ export class AuthService {
     const ownerId = this.ownerByDigest.get(tokenDigest(token));
     return ownerId ? { ownerId } : undefined;
   }
+
+  authenticateByAgentId(agentId: string): AuthenticatedOwner | undefined {
+    const ownerId = this.ownerByAgentId.get(normalizeAgentId(agentId));
+    return ownerId ? { ownerId } : undefined;
+  }
 }
 
 function tokenDigest(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+function normalizeAgentId(agentId: string): string {
+  return agentId.trim();
 }

@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Application } from "./app.js";
-import { createMcpServer } from "./mcp.js";
+import { callTool, createMcpServer } from "./mcp.js";
 import { parseLoginProvider } from "./login-manager.js";
 import { logger } from "./logger.js";
 import { ServiceMetrics } from "./metrics.js";
@@ -126,6 +126,10 @@ export function startHttpServer(app: Application) {
       return handleLoginRoute(path, request, response, app);
     }
 
+    if (path.startsWith("/api/")) {
+      return handleApiRoute(path, request, response, app);
+    }
+
     if (path !== "/mcp") return sendJson(response, 404, { error: "Not Found" });
     if (!passesOriginGuard(request, response, allowedOrigins)) return;
 
@@ -221,6 +225,92 @@ export function startHttpServer(app: Application) {
     await transport.handleRequest(request, response, body);
   }
 
+  async function handleApiRoute(
+    path: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+    app: Application,
+  ): Promise<void> {
+    if (path === "/api/call") {
+      return handleApiCall(request, response, app);
+    }
+    return sendJson(response, 404, { error: "Not Found" });
+  }
+
+  async function handleApiCall(
+    request: IncomingMessage,
+    response: ServerResponse,
+    app: Application,
+  ): Promise<void> {
+    if (request.method !== "POST") {
+      return sendJson(response, 405, { error: "Method Not Allowed" });
+    }
+
+    const owner = authenticateAny(request, app);
+    if (!owner) {
+      metrics.authenticationFailuresTotal += 1;
+      return sendUnauthorized(response);
+    }
+
+    let body: unknown;
+    try {
+      body = await readJsonBody(
+        request,
+        app.config.maxRequestBodyBytes ?? 1536 * 1024,
+      );
+    } catch (error) {
+      if (error instanceof RequestBodyError) {
+        return sendJson(response, error.status, {
+          ok: false,
+          error: error.message,
+        });
+      }
+      throw error;
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return sendJson(response, 400, {
+        ok: false,
+        error: "Request body must be a JSON object",
+      });
+    }
+
+    const payload = body as Record<string, unknown>;
+    const tool = payload.tool;
+    if (typeof tool !== "string" || tool.length === 0) {
+      return sendJson(response, 400, {
+        ok: false,
+        error: "Missing 'tool' field",
+      });
+    }
+    const args =
+      payload.args &&
+      typeof payload.args === "object" &&
+      !Array.isArray(payload.args)
+        ? (payload.args as Record<string, unknown>)
+        : {};
+
+    const tenant = app.getTenant(owner.ownerId);
+    try {
+      const result = await callTool(owner.ownerId, tool, args, {
+        config: app.config,
+        contracts: app.contracts,
+        db: tenant.db,
+        sessions: app.sessions,
+        login: app.login,
+        client: tenant.client,
+        changes: tenant.changes,
+      });
+      return sendJson(response, 200, {
+        ok: true,
+        data: serializeToolResult(result),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return sendJson(response, 500, { ok: false, error: message });
+    }
+  }
+
   server.listen(app.config.port, app.config.host, () => {
     logger.log("info", "server_listening", {
       host: app.config.host,
@@ -290,6 +380,28 @@ function authenticateRequest(request: IncomingMessage, app: Application) {
   const authorization = firstHeader(request.headers.authorization);
   if (!authorization?.startsWith("Bearer ")) return undefined;
   return app.auth.authenticate(authorization.slice("Bearer ".length));
+}
+
+function authenticateAny(request: IncomingMessage, app: Application) {
+  const bearer = authenticateRequest(request, app);
+  if (bearer) return bearer;
+  const agentId = firstHeader(request.headers["x-agent-id"]);
+  if (agentId) return app.auth.authenticateByAgentId(agentId);
+  return undefined;
+}
+
+function serializeToolResult(result: unknown): unknown {
+  if (result && typeof result === "object") {
+    const obj = result as Record<string, unknown>;
+    if (Buffer.isBuffer(obj.image)) {
+      return {
+        ...obj,
+        image: (obj.image as Buffer).toString("base64"),
+        image_mime: "image/png",
+      };
+    }
+  }
+  return result;
 }
 
 function handleLoginRoute(
