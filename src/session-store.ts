@@ -13,6 +13,8 @@ import type { StoredWebSession } from "./types.js";
 
 export class SessionStore {
   private readonly sessionsDir: string;
+  // 旧单文件 session.enc 一旦确认不存在，后续 load 不再重复尝试读取。
+  private legacySingleFileAbsent = false;
 
   constructor(
     private readonly dataDir: string,
@@ -65,12 +67,16 @@ export class SessionStore {
   private async migrateLegacySingleFile(
     employeeId: string,
   ): Promise<StoredWebSession | undefined> {
+    if (this.legacySingleFileAbsent) return undefined;
     const legacyPath = join(this.dataDir, "session.enc");
     let serialized: string;
     try {
       serialized = await readFile(legacyPath, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.legacySingleFileAbsent = true;
+        return undefined;
+      }
       throw error;
     }
     try {
