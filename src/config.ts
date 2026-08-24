@@ -194,7 +194,7 @@ export function loadConfig(): AppConfig {
       1_572_864,
       16 * 1024 * 1024,
     ),
-    maxConcurrentLogins: boundedPositiveInt("MAX_CONCURRENT_LOGINS", 2, 32),
+    maxConcurrentLogins: boundedPositiveInt("MAX_CONCURRENT_LOGINS", 16, 32),
     gracefulShutdownSeconds: boundedPositiveInt(
       "GRACEFUL_SHUTDOWN_SECONDS",
       30,
