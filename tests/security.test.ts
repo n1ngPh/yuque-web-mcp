@@ -63,7 +63,7 @@ describe("single-owner security boundaries", () => {
     db.close();
   });
 
-  it("encrypts the owner's Cookie Jar and account binding in one local file", async () => {
+  it("isolates each owner's encrypted session in a separate file", async () => {
     const directory = await temporaryDirectory();
     const crypto = new CryptoBox(randomBytes(32));
     const store = new SessionStore(directory, crypto, OWNER_ID);
@@ -71,46 +71,50 @@ describe("single-owner security boundaries", () => {
 
     await store.save(OWNER_ID, session);
     await expect(store.load(OWNER_ID)).resolves.toEqual(session);
-    await expect(store.load("employee.b")).rejects.toThrow(
-      "Session owner mismatch",
-    );
-    await expect(store.save("employee.b", session)).rejects.toThrow(
-      "Session owner mismatch",
-    );
+    // 未登录的其他 owner 看不到该会话
+    await expect(store.load("employee.b")).resolves.toBeUndefined();
+    // 不同 owner 可以独立保存自己的会话
+    await store.save("employee.b", session);
+    await expect(store.load("employee.b")).resolves.toEqual(session);
 
-    const serialized = await readFile(join(directory, "session.enc"), "utf8");
+    const sessionFile = join(
+      directory,
+      "sessions",
+      `${createHash("sha256").update(OWNER_ID).digest("hex")}.enc`,
+    );
+    const serialized = await readFile(sessionFile, "utf8");
     expect(serialized).not.toContain("secret-cookie");
     expect(serialized).not.toContain("sensitive-value");
     expect(serialized).not.toContain("csrf-secret");
     expect(serialized).not.toContain("alice-secret-login");
-    expect((await stat(join(directory, "session.enc"))).mode & 0o777).toBe(
-      0o600,
-    );
+    expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
 
     await store.remove(OWNER_ID);
     await expect(store.load(OWNER_ID)).resolves.toBeUndefined();
   });
 
-  it("migrates the previous per-employee encrypted session without deleting it", async () => {
+  it("migrates the legacy single-file session without deleting it", async () => {
     const directory = await temporaryDirectory();
     const crypto = new CryptoBox(randomBytes(32));
-    const legacyDirectory = join(directory, "sessions");
-    const legacyName = `${createHash("sha256").update(OWNER_ID).digest("hex")}.enc`;
-    const legacyPath = join(legacyDirectory, legacyName);
     const session = webSession();
-    await mkdir(legacyDirectory, { recursive: true });
+    // 旧版单租户单文件会话
     await writeFile(
-      legacyPath,
+      join(directory, "session.enc"),
       crypto.encrypt(session, `yuque-web-session:${OWNER_ID}`),
       { mode: 0o600 },
     );
 
     const store = new SessionStore(directory, crypto, OWNER_ID);
     await expect(store.load(OWNER_ID)).resolves.toEqual(session);
+    const migratedPath = join(
+      directory,
+      "sessions",
+      `${createHash("sha256").update(OWNER_ID).digest("hex")}.enc`,
+    );
+    await expect(readFile(migratedPath, "utf8")).resolves.toBeTruthy();
     await expect(
       readFile(join(directory, "session.enc"), "utf8"),
     ).resolves.toBeTruthy();
-    await expect(readFile(legacyPath, "utf8")).resolves.toBeTruthy();
   });
 
   it("rejects a tampered encrypted session", async () => {
@@ -118,7 +122,11 @@ describe("single-owner security boundaries", () => {
     const crypto = new CryptoBox(randomBytes(32));
     const store = new SessionStore(directory, crypto, OWNER_ID);
     await store.save(OWNER_ID, webSession());
-    const path = join(directory, "session.enc");
+    const path = join(
+      directory,
+      "sessions",
+      `${createHash("sha256").update(OWNER_ID).digest("hex")}.enc`,
+    );
     const envelope = JSON.parse(await readFile(path, "utf8")) as {
       ciphertext: string;
     };

@@ -47,7 +47,7 @@ export async function createRuntimeBackup(
     await database.backup(join(target, "state.db"));
     await chmod(join(target, "state.db"), 0o600);
     await copyOptionalPrivateFile(
-      join(config.dataDir, "session.enc"),
+      sessionFileFor(config.dataDir, config.ownerId),
       join(target, "session.enc"),
     );
     if (options.includeEncryptionKey) {
@@ -236,18 +236,20 @@ async function installBackupFiles(
   await rm(join(config.dataDir, "state.db-wal"), { force: true });
   await rm(join(config.dataDir, "state.db-shm"), { force: true });
   await rename(temporaryDatabase, config.databasePath);
+  const sessionTarget = sessionFileFor(config.dataDir, config.ownerId);
   const sessionSource = join(backup, "session.enc");
   try {
+    await mkdir(dirname(sessionTarget), { recursive: true, mode: 0o700 });
     const temporarySession = join(
-      config.dataDir,
+      dirname(sessionTarget),
       `.session.enc.restore-${randomUUID()}`,
     );
     await copyFile(sessionSource, temporarySession);
     await chmod(temporarySession, 0o600);
-    await rename(temporarySession, join(config.dataDir, "session.enc"));
+    await rename(temporarySession, sessionTarget);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    await rm(join(config.dataDir, "session.enc"), { force: true });
+    await rm(sessionTarget, { force: true });
   }
 }
 
@@ -387,6 +389,11 @@ function ownerHash(ownerId: string): string {
   return createHash("sha256")
     .update(`yuque-web-mcp-backup-owner:v1:${ownerId}`)
     .digest("hex");
+}
+
+function sessionFileFor(dataDir: string, ownerId: string): string {
+  const digest = createHash("sha256").update(ownerId).digest("hex");
+  return join(dataDir, "sessions", `${digest}.enc`);
 }
 
 function timestamp(): string {
