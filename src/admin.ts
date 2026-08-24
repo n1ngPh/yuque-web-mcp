@@ -95,15 +95,14 @@ async function main(): Promise<void> {
       case "backup": {
         const output = requiredOption(options, "output");
         assertNoOptions(options);
-        print(await createRuntimeBackup(config, app.db, output));
+        print(await createRuntimeBackup(config, app.getTenant(app.config.ownerId).db, output));
         break;
       }
       default:
         throw new Error(usage());
     }
   } finally {
-    app.db.close();
-    await app.client.close();
+    await app.close();
   }
 }
 

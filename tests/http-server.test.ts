@@ -88,7 +88,7 @@ describe("Streamable HTTP single-owner boundary", () => {
       });
     } finally {
       await new Promise<void>((done) => server.close(() => done()));
-      app.db.close();
+      await app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
   });
@@ -185,7 +185,7 @@ describe("Streamable HTTP single-owner boundary", () => {
       expect(extraPath.status).toBe(404);
     } finally {
       await new Promise<void>((done) => server.close(() => done()));
-      app.db.close();
+      await app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
   });
@@ -207,7 +207,7 @@ describe("Streamable HTTP single-owner boundary", () => {
       expect(await response.text()).not.toContain("x".repeat(32));
     } finally {
       await new Promise<void>((done) => server.close(() => done()));
-      app.db.close();
+      await app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
   });
@@ -233,7 +233,7 @@ describe("Streamable HTTP single-owner boundary", () => {
       expect(result.writesDrained).toBe(true);
       expect(performance.now() - startedAt).toBeLessThan(500);
     } finally {
-      app.db.close();
+      await app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
   });

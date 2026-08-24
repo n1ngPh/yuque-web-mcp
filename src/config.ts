@@ -93,8 +93,10 @@ export function loadConfig(): AppConfig {
     );
   }
   const users = loadUsers();
-  const ownerId = users[0].ownerId;
-  const mcpBearerToken = users[0].bearerToken;
+  const firstUser = users[0];
+  if (!firstUser) throw new Error("At least one user is required");
+  const ownerId = firstUser.ownerId;
+  const mcpBearerToken = firstUser.bearerToken;
   const host = process.env.HOST?.trim() || "127.0.0.1";
   const port = positiveInt("PORT", 3000);
   const dataDir = resolve(process.env.DATA_DIR?.trim() || "./runtime");
@@ -213,12 +215,15 @@ export function loadConfig(): AppConfig {
 function loadUsers(): UserCredentials[] {
   const file = process.env.MCP_USERS_FILE?.trim();
   if (file) return loadUsersFromFile(file);
-  return [
-    {
-      ownerId: required("MCP_OWNER_ID"),
-      bearerToken: required("MCP_BEARER_TOKEN"),
-    },
-  ];
+  return validateUsers(
+    [
+      {
+        ownerId: required("MCP_OWNER_ID"),
+        bearerToken: required("MCP_BEARER_TOKEN"),
+      },
+    ],
+    "MCP_OWNER_ID",
+  );
 }
 
 function loadUsersFromFile(file: string): UserCredentials[] {
@@ -239,39 +244,47 @@ function loadUsersFromFile(file: string): UserCredentials[] {
     throw new Error('MCP_USERS_FILE must be an object with a "users" array');
   }
   const rawUsers = (parsed as { users: unknown[] }).users;
-  if (rawUsers.length === 0) {
-    throw new Error("MCP_USERS_FILE must contain at least one user");
-  }
   const users: UserCredentials[] = [];
-  const seenOwnerIds = new Set<string>();
-  const seenTokens = new Set<string>();
   for (const raw of rawUsers) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       throw new Error("Each entry in MCP_USERS_FILE must be an object");
     }
     const entry = raw as Record<string, unknown>;
-    const ownerId = typeof entry.owner_id === "string" ? entry.owner_id : "";
-    const bearerToken =
-      typeof entry.bearer_token === "string" ? entry.bearer_token : "";
-    if (!/^[A-Za-z0-9._@-]{1,128}$/.test(ownerId)) {
+    users.push({
+      ownerId: typeof entry.owner_id === "string" ? entry.owner_id : "",
+      bearerToken:
+        typeof entry.bearer_token === "string" ? entry.bearer_token : "",
+    });
+  }
+  return validateUsers(users, "MCP_USERS_FILE owner_id");
+}
+
+function validateUsers(
+  users: UserCredentials[],
+  ownerLabel: string,
+): UserCredentials[] {
+  if (users.length === 0) {
+    throw new Error("At least one user is required");
+  }
+  const seenOwnerIds = new Set<string>();
+  const seenTokens = new Set<string>();
+  for (const user of users) {
+    if (!/^[A-Za-z0-9._@-]{1,128}$/.test(user.ownerId)) {
       throw new Error(
-        "MCP_USERS_FILE owner_id must be 1-128 characters from A-Z, a-z, 0-9, . _ @ -",
+        `${ownerLabel} must be 1-128 characters from A-Z, a-z, 0-9, . _ @ -`,
       );
     }
-    if (Buffer.byteLength(bearerToken, "utf8") < 32) {
-      throw new Error(
-        "MCP_USERS_FILE bearer_token must contain at least 32 bytes",
-      );
+    if (Buffer.byteLength(user.bearerToken, "utf8") < 32) {
+      throw new Error("MCP_BEARER_TOKEN must contain at least 32 bytes");
     }
-    if (seenOwnerIds.has(ownerId)) {
-      throw new Error(`Duplicate owner_id in MCP_USERS_FILE: ${ownerId}`);
+    if (seenOwnerIds.has(user.ownerId)) {
+      throw new Error(`Duplicate owner_id: ${user.ownerId}`);
     }
-    if (seenTokens.has(bearerToken)) {
-      throw new Error("Duplicate bearer_token in MCP_USERS_FILE");
+    if (seenTokens.has(user.bearerToken)) {
+      throw new Error("Duplicate bearer_token");
     }
-    seenOwnerIds.add(ownerId);
-    seenTokens.add(bearerToken);
-    users.push({ ownerId, bearerToken });
+    seenOwnerIds.add(user.ownerId);
+    seenTokens.add(user.bearerToken);
   }
   return users;
 }
