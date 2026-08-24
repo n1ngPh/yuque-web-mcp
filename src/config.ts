@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import type { UserCredentials } from "./types.js";
 
 function required(name: string): string {
   const value = secretValue(name)?.trim();
@@ -36,6 +37,7 @@ function boundedPositiveInt(
 export interface AppConfig {
   ownerId: string;
   mcpBearerToken: string;
+  users?: UserCredentials[];
   host: string;
   port: number;
   publicBaseUrl: string;
@@ -90,16 +92,9 @@ export function loadConfig(): AppConfig {
       "NODE_TLS_REJECT_UNAUTHORIZED=0 is forbidden; configure a trusted CA file instead",
     );
   }
-  const ownerId = required("MCP_OWNER_ID");
-  if (!/^[A-Za-z0-9._@-]{1,128}$/.test(ownerId)) {
-    throw new Error(
-      "MCP_OWNER_ID must be 1-128 characters from A-Z, a-z, 0-9, . _ @ -",
-    );
-  }
-  const mcpBearerToken = required("MCP_BEARER_TOKEN");
-  if (Buffer.byteLength(mcpBearerToken, "utf8") < 32) {
-    throw new Error("MCP_BEARER_TOKEN must contain at least 32 bytes");
-  }
+  const users = loadUsers();
+  const ownerId = users[0].ownerId;
+  const mcpBearerToken = users[0].bearerToken;
   const host = process.env.HOST?.trim() || "127.0.0.1";
   const port = positiveInt("PORT", 3000);
   const dataDir = resolve(process.env.DATA_DIR?.trim() || "./runtime");
@@ -153,6 +148,7 @@ export function loadConfig(): AppConfig {
   return {
     ownerId,
     mcpBearerToken,
+    users,
     host,
     port,
     publicBaseUrl,
@@ -212,6 +208,72 @@ export function loadConfig(): AppConfig {
     captchaBrowserPath:
       process.env.CAPTCHA_BROWSER_PATH?.trim() || chromiumExecutable,
   };
+}
+
+function loadUsers(): UserCredentials[] {
+  const file = process.env.MCP_USERS_FILE?.trim();
+  if (file) return loadUsersFromFile(file);
+  return [
+    {
+      ownerId: required("MCP_OWNER_ID"),
+      bearerToken: required("MCP_BEARER_TOKEN"),
+    },
+  ];
+}
+
+function loadUsersFromFile(file: string): UserCredentials[] {
+  const path = privateRegularFile(file, "MCP_USERS_FILE");
+  const serialized = readFileSync(path, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    throw new Error("MCP_USERS_FILE must contain valid JSON");
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    !Array.isArray((parsed as { users?: unknown }).users)
+  ) {
+    throw new Error('MCP_USERS_FILE must be an object with a "users" array');
+  }
+  const rawUsers = (parsed as { users: unknown[] }).users;
+  if (rawUsers.length === 0) {
+    throw new Error("MCP_USERS_FILE must contain at least one user");
+  }
+  const users: UserCredentials[] = [];
+  const seenOwnerIds = new Set<string>();
+  const seenTokens = new Set<string>();
+  for (const raw of rawUsers) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Each entry in MCP_USERS_FILE must be an object");
+    }
+    const entry = raw as Record<string, unknown>;
+    const ownerId = typeof entry.owner_id === "string" ? entry.owner_id : "";
+    const bearerToken =
+      typeof entry.bearer_token === "string" ? entry.bearer_token : "";
+    if (!/^[A-Za-z0-9._@-]{1,128}$/.test(ownerId)) {
+      throw new Error(
+        "MCP_USERS_FILE owner_id must be 1-128 characters from A-Z, a-z, 0-9, . _ @ -",
+      );
+    }
+    if (Buffer.byteLength(bearerToken, "utf8") < 32) {
+      throw new Error(
+        "MCP_USERS_FILE bearer_token must contain at least 32 bytes",
+      );
+    }
+    if (seenOwnerIds.has(ownerId)) {
+      throw new Error(`Duplicate owner_id in MCP_USERS_FILE: ${ownerId}`);
+    }
+    if (seenTokens.has(bearerToken)) {
+      throw new Error("Duplicate bearer_token in MCP_USERS_FILE");
+    }
+    seenOwnerIds.add(ownerId);
+    seenTokens.add(bearerToken);
+    users.push({ ownerId, bearerToken });
+  }
+  return users;
 }
 
 export function loadEnvironmentFile(): void {

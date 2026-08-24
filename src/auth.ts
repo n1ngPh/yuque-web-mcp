@@ -1,31 +1,43 @@
 import { createHash } from "node:crypto";
-import { safeBufferEqual } from "./crypto.js";
+import type { UserCredentials } from "./types.js";
 
 export interface AuthenticatedOwner {
   ownerId: string;
 }
 
 export class AuthService {
-  private readonly expectedDigest: Buffer;
+  private readonly ownerByDigest = new Map<string, string>();
 
+  constructor(users: UserCredentials[]);
+  constructor(ownerId: string, bearerToken: string);
   constructor(
-    private readonly ownerId: string,
-    bearerToken: string,
+    usersOrOwnerId: UserCredentials[] | string,
+    bearerToken?: string,
   ) {
-    if (Buffer.byteLength(bearerToken, "utf8") < 32) {
-      throw new Error("MCP Bearer Token must contain at least 32 bytes");
+    const users: UserCredentials[] = Array.isArray(usersOrOwnerId)
+      ? usersOrOwnerId
+      : [{ ownerId: usersOrOwnerId, bearerToken: bearerToken ?? "" }];
+    if (users.length === 0) {
+      throw new Error("At least one user is required");
     }
-    this.expectedDigest = tokenDigest(bearerToken);
+    for (const user of users) {
+      if (Buffer.byteLength(user.bearerToken, "utf8") < 32) {
+        throw new Error("MCP Bearer Token must contain at least 32 bytes");
+      }
+      const digest = tokenDigest(user.bearerToken);
+      if (this.ownerByDigest.has(digest)) {
+        throw new Error("Duplicate bearer token");
+      }
+      this.ownerByDigest.set(digest, user.ownerId);
+    }
   }
 
   authenticate(token: string): AuthenticatedOwner | undefined {
-    const candidate = tokenDigest(token);
-    return safeBufferEqual(candidate, this.expectedDigest)
-      ? { ownerId: this.ownerId }
-      : undefined;
+    const ownerId = this.ownerByDigest.get(tokenDigest(token));
+    return ownerId ? { ownerId } : undefined;
   }
 }
 
-function tokenDigest(token: string): Buffer {
-  return createHash("sha256").update(token, "utf8").digest();
+function tokenDigest(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }

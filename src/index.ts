@@ -18,8 +18,7 @@ async function main(): Promise<void> {
   try {
     runtime = startHttpServer(app);
   } catch (error) {
-    app.db.close();
-    await app.client.close();
+    await app.close();
     await runtimeLock.release();
     throw error;
   }
@@ -31,7 +30,6 @@ async function main(): Promise<void> {
     stopping = true;
     logger.log("info", "shutdown_requested", { signal });
     const result = await shutdown();
-    app.db.close();
     await runtimeLock.release();
     process.exitCode = result.writesDrained ? 0 : 1;
   };

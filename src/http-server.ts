@@ -106,7 +106,7 @@ export function startHttpServer(app: Application) {
         metrics.render({
           activeSessions: sessions.size,
           activeLogins: app.login.activeCount(),
-          activeWrites: app.changes.activeWriteCount(),
+          activeWrites: app.activeWriteCount(),
           ready: !draining && readiness.ready,
         }),
       );
@@ -207,7 +207,16 @@ export function startHttpServer(app: Application) {
     transport.onclose = () => {
       if (transport.sessionId) sessions.delete(transport.sessionId);
     };
-    const mcpServer = createMcpServer(owner.ownerId, app);
+    const tenant = app.getTenant(owner.ownerId);
+    const mcpServer = createMcpServer(owner.ownerId, {
+      config: app.config,
+      contracts: app.contracts,
+      db: tenant.db,
+      sessions: app.sessions,
+      login: app.login,
+      client: tenant.client,
+      changes: tenant.changes,
+    });
     await mcpServer.connect(transport);
     await transport.handleRequest(request, response, body);
   }
@@ -239,13 +248,13 @@ export function startHttpServer(app: Application) {
     shutdownPromise ??= (async () => {
       draining = true;
       clearInterval(cleanupTimer);
-      app.changes.beginShutdown();
+      app.beginShutdown();
       const timeoutMs = (app.config.gracefulShutdownSeconds ?? 30) * 1_000;
       const serverClosed = new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
       await app.login.shutdown();
-      const writesDrained = await app.changes.waitForIdle(timeoutMs);
+      const writesDrained = await app.waitForIdle(timeoutMs);
       await Promise.all(
         [...sessions.values()].map((active) =>
           active.transport.close().catch(() => undefined),
@@ -265,7 +274,7 @@ export function startHttpServer(app: Application) {
       } finally {
         if (closeTimeout) clearTimeout(closeTimeout);
       }
-      await app.client.close();
+      await app.close();
       logger.log(writesDrained ? "info" : "error", "server_shutdown", {
         writes_drained: writesDrained,
       });
