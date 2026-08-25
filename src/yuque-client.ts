@@ -1019,6 +1019,15 @@ export class YuqueWebClient {
         "Personal global search is not verified; provide a personal book_url for book-scoped search",
       );
     }
+    // organization 范围搜索（无 bookUrl）先解析 organization 真实 host，
+    // 避免 YUQUE_HOST 配错时静默退回全网公开搜索（假成功）。
+    let baseHost = book?.host;
+    let referer: string | undefined;
+    if (!book && scopeId !== "personal") {
+      const org = await this.resolveOrganizationSearchScope(employeeId, scopeId);
+      baseHost = org.host;
+      referer = `${org.host}/dashboard`;
+    }
     return this.request(employeeId, "search", {
       query: {
         p: 1,
@@ -1028,11 +1037,35 @@ export class YuqueWebClient {
         tab: book ? "book" : "organization",
         scope: book ? `${book.groupLogin}/${book.slug}` : "/",
       },
-      baseHost: book?.host ?? this.config.yuqueHost,
-      ...(book?.scopeType === "personal"
-        ? { referer: `${this.config.personalYuqueHost}/dashboard` }
-        : {}),
+      baseHost: baseHost ?? this.config.yuqueHost,
+      ...(referer
+        ? { referer }
+        : book?.scopeType === "personal"
+          ? { referer: `${this.config.personalYuqueHost}/dashboard` }
+          : {}),
     });
+  }
+
+  private async resolveOrganizationSearchScope(
+    employeeId: string,
+    scopeId: string,
+  ): Promise<YuqueScope> {
+    const scopes = await this.listScopes(employeeId);
+    const wantedId =
+      scopeId === "organization"
+        ? undefined
+        : scopeId.slice("organization:".length);
+    const org = scopes.scopes.find(
+      (scope) =>
+        scope.type === "organization" &&
+        (wantedId === undefined || scope.organizationId === Number(wantedId)),
+    );
+    if (!org) {
+      throw new ContractError(
+        `Organization scope ${scopeId} not found for this account`,
+      );
+    }
+    return org;
   }
 
   async getToc(
@@ -4039,7 +4072,8 @@ function normalizeOrganizationScope(
   const advertisedHost = optionalStringValue(record.host);
   if (advertisedHost && !sameHostname(advertisedHost, configuredHost)) {
     throw new ContractError(
-      "Yuque organization host does not match the configured company host",
+      `Yuque organization host does not match the configured company host ` +
+        `(advertisedHost=${advertisedHost}, configuredHost=${configuredHost})`,
     );
   }
   return {

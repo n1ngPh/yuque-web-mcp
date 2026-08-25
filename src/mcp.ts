@@ -820,7 +820,7 @@ export async function callTool(
   switch (name) {
     case "yuque_auth_status": {
       const session = await deps.sessions.load(employeeId);
-      return {
+      const result: Record<string, unknown> = {
         connected: Boolean(session),
         owner_id: employeeId,
         ...(session?.account.login
@@ -829,6 +829,17 @@ export async function callTool(
         ...(session?.account.name ? { yuque_name: session.account.name } : {}),
         relogin_required: !session,
       };
+      if (session) {
+        try {
+          const scopes = await deps.client.listScopes(employeeId);
+          result.organizations = scopes.scopes.filter(
+            (scope) => scope.type === "organization",
+          );
+        } catch {
+          // 忽略：组织列表获取失败不应影响 auth_status 主流程
+        }
+      }
+      return result;
     }
     case "yuque_get_capabilities":
       return buildCapabilityReport(deps.config, deps.contracts);
