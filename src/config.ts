@@ -51,6 +51,7 @@ export interface AppConfig {
   allowedOrigins: string[];
   encryptionKey: Buffer;
   chromiumExecutable: string;
+  chromiumSandbox?: boolean;
   loginTtlSeconds: number;
   changeTtlSeconds: number;
   requestTimeoutMs: number;
@@ -143,6 +144,7 @@ export function loadConfig(): AppConfig {
 
   const chromiumExecutable =
     process.env.CHROMIUM_EXECUTABLE?.trim() || "/usr/bin/chromium";
+  const chromiumSandbox = strictBoolean("CHROMIUM_SANDBOX", true);
   const captchaSolvePath = resolve(
     process.env.CAPTCHA_SOLVE_PATH?.trim() || "./captcha/solve.py",
   );
@@ -164,6 +166,7 @@ export function loadConfig(): AppConfig {
     allowedOrigins: splitList(process.env.MCP_ALLOWED_ORIGINS),
     encryptionKey: decode32ByteSecret("SESSION_ENCRYPTION_KEY"),
     chromiumExecutable,
+    chromiumSandbox,
     loginTtlSeconds: positiveInt("LOGIN_TTL_SECONDS", 300),
     changeTtlSeconds: positiveInt("CHANGE_TTL_SECONDS", 600),
     requestTimeoutMs: positiveInt("YUQUE_REQUEST_TIMEOUT_MS", 15000),

@@ -393,6 +393,24 @@ function authenticateAny(request: IncomingMessage, app: Application) {
 function serializeToolResult(result: unknown): unknown {
   if (result && typeof result === "object") {
     const obj = result as Record<string, unknown>;
+    // login_begin 等工具返回 { data: {...}, image? } 结构，把 data 提升到顶层，
+    // 避免 REST 层再包一层 data 造成 data.data 嵌套。
+    if (
+      "data" in obj &&
+      obj.data &&
+      typeof obj.data === "object" &&
+      !Array.isArray(obj.data)
+    ) {
+      const inner = obj.data as Record<string, unknown>;
+      if (Buffer.isBuffer(obj.image)) {
+        return {
+          ...inner,
+          image: (obj.image as Buffer).toString("base64"),
+          image_mime: "image/png",
+        };
+      }
+      return inner;
+    }
     if (Buffer.isBuffer(obj.image)) {
       return {
         ...obj,

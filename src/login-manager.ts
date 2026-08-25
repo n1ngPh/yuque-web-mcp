@@ -57,7 +57,7 @@ export function chromiumLaunchOptions(config: AppConfig) {
   return {
     executablePath: config.chromiumExecutable,
     headless: true,
-    chromiumSandbox: CHROMIUM_SANDBOX_ENABLED,
+    chromiumSandbox: config.chromiumSandbox ?? CHROMIUM_SANDBOX_ENABLED,
     args: [...CHROMIUM_LAUNCH_ARGS],
     ...(proxy ? { proxy } : {}),
   };
