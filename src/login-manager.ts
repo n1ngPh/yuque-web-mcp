@@ -100,6 +100,7 @@ export class LoginManager {
     provider: LoginProvider;
     screenshot?: Buffer;
   }> {
+    this.sweepTerminal();
     const existing = [...this.attemptsById.values()].find(
       (attempt) =>
         attempt.employeeId === employeeId &&
@@ -147,6 +148,7 @@ export class LoginManager {
   }
 
   async beginSms(employeeId: string, phone: string): Promise<LoginStatus> {
+    this.sweepTerminal();
     const existing = [...this.attemptsById.values()].find(
       (attempt) =>
         attempt.employeeId === employeeId &&
@@ -350,6 +352,7 @@ export class LoginManager {
   }
 
   activeCount(): number {
+    this.sweepTerminal();
     return [...this.attemptsById.values()].filter((attempt) =>
       ACTIVE_LOGIN_STATES.includes(attempt.state),
     ).length;
@@ -484,6 +487,10 @@ export class LoginManager {
         attempt.message = "登录页面已过期";
       }
     } catch {
+      // chromium.launch 抛异常时 attempt.browser 尚未赋值，这里没有句柄可关闭；
+      // Playwright 会在自身 launch 失败路径清理已 spawn 的进程。若容器因 pids 上限
+      // 观察到孤儿 zygote/renderer 累积，应排查 Playwright 版本或用进程级 supervisor，
+      // 而不是在这里引入平台相关的按 pid/user-data-dir kill。
       attempt.state = "failed";
       attempt.message =
         "登录流程失败；请检查 Chromium、网络或是否出现交互式验证码";
@@ -529,6 +536,18 @@ export class LoginManager {
     await attempt.browser?.close().catch(() => undefined);
     delete attempt.context;
     delete attempt.browser;
+    // 释放二维码 PNG Buffer，避免 expired/failed/cancel 路径长期持有大对象。
+    delete attempt.screenshot;
+  }
+
+  private sweepTerminal(): void {
+    const now = Date.now();
+    for (const [loginId, attempt] of this.attemptsById) {
+      if (attempt.expiresAt.getTime() <= now) {
+        this.attemptsById.delete(loginId);
+        this.attemptsByCode.delete(attempt.publicCode);
+      }
+    }
   }
 
   private enqueueInteraction(

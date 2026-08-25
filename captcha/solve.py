@@ -15,6 +15,7 @@ data 调 VerifyCaptchaV3（Verify 不校验 TLS 指纹，可纯 HTTP）。
 环境变量：
   CAPTCHA_PROXY        HTTP(S) 代理出口（如 http://127.0.0.1:7897）；缺省直连
   CHROME_BROWSER_PATH  真实 Chrome/Chromium 可执行文件路径；缺省 DrissionPage 自动探测
+  CAPTCHA_NO_SANDBOX   设 true 时为受限容器（root/NoNewPrivs/降权）关闭 Chromium 沙箱；缺省保持沙箱
 """
 import base64
 import email.utils
@@ -165,6 +166,11 @@ def browser_capture():
         co.set_browser_path(browser_path)
     co.set_argument('--disable-blink-features=AutomationControlled')
     co.set_argument('--window-size=1440,900')
+    # 默认保持沙箱（与 SECURITY.md 基线一致）。受限容器（root、NoNewPrivs、cap 受限）
+    # 无法建 Chromium 沙箱时，部署者可显式设 CAPTCHA_NO_SANDBOX=true 关闭，风险自担。
+    if os.environ.get("CAPTCHA_NO_SANDBOX", "").strip().lower() in ("1", "true", "yes", "on"):
+        co.set_argument('--no-sandbox')
+        co.set_argument('--disable-dev-shm-usage')
     co.headless(True)
 
     # 每次都用独立临时 profile，避免复用上次登录残留的 _yuque_session，

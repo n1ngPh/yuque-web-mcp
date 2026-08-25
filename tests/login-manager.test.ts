@@ -268,6 +268,22 @@ describe("SMS login flow", () => {
       "At most 1 login flows",
     );
   });
+
+  it("sweeps expired attempts out of the internal maps", async () => {
+    const manager = smsManager(smsCaptcha({}), smsSessions());
+    const internal = manager as unknown as {
+      attemptsById: Map<string, unknown>;
+      attemptsByCode: Map<string, unknown>;
+    };
+    const expired = loginAttempt("success");
+    expired.expiresAt = new Date(Date.now() - 1000);
+    internal.attemptsById.set(expired.loginId, expired);
+    internal.attemptsByCode.set(expired.publicCode, expired);
+
+    expect(manager.activeCount()).toBe(0);
+    expect(internal.attemptsById.has(expired.loginId)).toBe(false);
+    expect(internal.attemptsByCode.has(expired.publicCode)).toBe(false);
+  });
 });
 
 function loginManager(): LoginManager {

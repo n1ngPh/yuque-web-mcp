@@ -50,6 +50,8 @@
 - 支持 MCP Streamable HTTP 的客户端
 - 可选（短信验证码登录）：Python 3.9+ 与 DrissionPage、真实 Chrome/Chromium，以及 `captcha/node_harness` 的 `crypto-js` 依赖
 
+> 注意：Node 22 + npm 10.9.x 下 `better-sqlite3` 可能因 npm 内置 node-gyp 的 bug 编译失败（`TypeError: Cannot read properties of undefined (reading 'pause')`）。可先用 `npm install --ignore-scripts`，再 `cd node_modules/better-sqlite3 && npx -y node-gyp rebuild && cd ../..`，或改用预编译二进制。
+
 ## 本地启动
 
 ```bash
@@ -109,6 +111,8 @@ npm run local:start
 3. 提供真实 Chrome/Chromium（`CAPTCHA_BROWSER_PATH`），DrissionPage 通过 CDP 直连真实浏览器，不使用 webdriver。
 4. 安装 `captcha/node_harness` 依赖：`cd captcha/node_harness && npm install`（仅 `crypto-js`）。
 5. 默认直连，无需代理。仅当验证码被风控拒绝（拿不到 `certifyId`，通常返回 `F001`）时，服务会提示并建议设置 `CAPTCHA_PROXY` / `YUQUE_HTTPS_PROXY` 切换到干净的出口代理后重试。
+
+在 root / `NoNewPrivs` / 降权容器里，Chromium 可能无法建立自己的沙箱；此时可设 `CAPTCHA_NO_SANDBOX=true` 关闭沙箱。默认保持沙箱，该开关有安全风险，仅部署者在受限容器内自担。
 
 启用后，未登录时依次调用 `yuque_login_begin_sms {phone}` 发送验证码、`yuque_login_submit_sms {login_id, code}` 提交验证码。短信登录依赖语雀网页接口，属未公开接口，与扫码登录一样可能随前端升级失效。
 
