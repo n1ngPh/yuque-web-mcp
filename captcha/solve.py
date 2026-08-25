@@ -165,6 +165,10 @@ def browser_capture():
         co.set_browser_path(browser_path)
     co.set_argument('--disable-blink-features=AutomationControlled')
     co.set_argument('--window-size=1440,900')
+    # 容器内以 root 运行 Chromium 必须禁用 sandbox（否则 BrowserConnectError），
+    # 并禁用 /dev/shm 避免容器共享内存过小导致页面崩溃
+    co.set_argument('--no-sandbox')
+    co.set_argument('--disable-dev-shm-usage')
     co.headless(True)
 
     # 每次都用独立临时 profile，避免复用上次登录残留的 _yuque_session，
