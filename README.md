@@ -136,7 +136,7 @@ npm run local:start
 WRITE_CONSISTENCY_MODE=strict
 ```
 
-`strict`模式允许读取和Preview，但会在发包前阻止缺少可靠并发保护的远程Confirm。部署者只有在接受语雀网页接口不存在原子CAS的限制后，才可显式设置`best_effort`；该模式仍然受同目标本地串行、语雀临时锁持有者核验、获取锁后二次版本/指纹重读、一次性Change Token、契约`liveWriteEnabled`、加密快照、单次写请求、超时只读对账和写后回读约束，不会绕过未验证接口门禁。已有知识库内的写入还必须命中精确知识库白名单；创建新的私有个人知识库没有预先存在的URL，因此改为绑定当前扫码账号、Confirm前同名检查、单次发包、超时对账和最终URL回读。Doc与Sheet快照都能生成恢复Preview并走相同锁与回读流程。
+`strict`模式允许读取和Preview，但会在发包前阻止缺少可靠并发保护的远程Confirm。部署者只有在接受语雀网页接口不存在原子CAS的限制后，才可显式设置`best_effort`；该模式仍然受同目标本地串行、语雀临时锁持有者核验、获取锁后二次版本/指纹重读、一次性Change Token、契约`liveWriteEnabled`、加密快照、单次写请求、超时只读对账和写后回读约束，不会绕过未验证接口门禁。已有知识库内的写入还必须命中精确知识库白名单（组织空间可设 `YUQUE_WRITE_ORGANIZATION_OPEN=true` 放开精确库清单、改由语雀账号权限兜底——无权限账号写请求会被语雀拒绝；个人空间写仍走精确白名单）；创建新的私有个人知识库没有预先存在的URL，因此改为绑定当前扫码账号、Confirm前同名检查、单次发包、超时对账和最终URL回读。Doc与Sheet快照都能生成恢复Preview并走相同锁与回读流程。
 
 ## Docker
 
