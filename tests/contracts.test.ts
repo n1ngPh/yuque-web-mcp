@@ -66,7 +66,7 @@ describe("web endpoint contracts", () => {
       method: "GET",
       path: "/api/docs/{docId}/lock",
       verified: true,
-      verifiedHostTypes: ["personal"],
+      verifiedHostTypes: ["organization", "personal"],
     });
     const create = registry.manifest.endpoints.find(
       (entry) => entry.capability === "create_sheet",

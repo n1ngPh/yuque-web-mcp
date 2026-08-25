@@ -688,9 +688,11 @@
       "capability": "get_doc_editor",
       "verified": true,
       "observedHostTypes": [
+        "organization",
         "personal"
       ],
       "verifiedHostTypes": [
+        "organization",
         "personal"
       ],
       "method": "GET",
@@ -715,9 +717,11 @@
       "capability": "get_doc_lock",
       "verified": true,
       "observedHostTypes": [
+        "organization",
         "personal"
       ],
       "verifiedHostTypes": [
+        "organization",
         "personal"
       ],
       "method": "GET",
@@ -734,9 +738,11 @@
       "capability": "acquire_doc_lock",
       "verified": true,
       "observedHostTypes": [
+        "organization",
         "personal"
       ],
       "verifiedHostTypes": [
+        "organization",
         "personal"
       ],
       "method": "PUT",
@@ -753,9 +759,11 @@
       "capability": "release_doc_lock",
       "verified": true,
       "observedHostTypes": [
+        "organization",
         "personal"
       ],
       "verifiedHostTypes": [
+        "organization",
         "personal"
       ],
       "method": "DELETE",
