@@ -50,6 +50,7 @@ interface RequestOptions {
   referer?: string;
   baseHost?: string;
   returnEnvelope?: boolean;
+  skipPersist?: boolean;
 }
 
 export type YuqueScopeType = "personal" | "organization";
@@ -1972,11 +1973,7 @@ export class YuqueWebClient {
       return cached.documents;
     }
     const books = await this.listAllBooks(employeeId, scopeId);
-    const documents: LocatedDocument[] = [];
-    for (const book of books) {
-      const nodes = await this.loadCatalog(employeeId, book);
-      documents.push(...catalogDocuments(book, nodes));
-    }
+    const documents = await this.loadAllCatalogsConcurrently(employeeId, books);
     const deduplicated = deduplicateBy(
       documents,
       (document) => `${document.bookId}:${document.id}`,
@@ -1986,6 +1983,35 @@ export class YuqueWebClient {
       documents: deduplicated,
     });
     return deduplicated;
+  }
+
+  private async loadAllCatalogsConcurrently(
+    employeeId: string,
+    books: NormalizedBook[],
+  ): Promise<LocatedDocument[]> {
+    // 受限并发拉取每个知识库的目录，避免串行 20 个 get_toc 耗时过长。
+    // 走 requestUnlocked 绕过 per-employee 串行队列，并 skipPersist 跳过
+    // 写回 session（纯读请求不改变 Cookie/CSRF，且并发写 .tmp 会竞争）。
+    const concurrency = 5;
+    const collected: LocatedDocument[] = [];
+    for (let offset = 0; offset < books.length; offset += concurrency) {
+      const batch = books.slice(offset, offset + concurrency);
+      const results = await Promise.all(
+        batch.map(async (book) => {
+          const raw = await this.requestUnlocked(employeeId, "get_toc", {
+            query: { book_id: book.id },
+            baseHost: book.host,
+            skipPersist: true,
+          });
+          if (!Array.isArray(raw)) {
+            throw new ContractError("Yuque catalog response is not an array");
+          }
+          return catalogDocuments(book, normalizeCatalog(raw, book));
+        }),
+      );
+      for (const docs of results) collected.push(...docs);
+    }
+    return collected;
   }
 
   async prepareCreateTarget(
@@ -3635,13 +3661,15 @@ export class YuqueWebClient {
             `Yuque web request failed (${response.status})`,
           );
         assertRequiredPaths(parsed, contract.requiredResponsePaths);
-        await this.persistJar(
-          employeeId,
-          session,
-          jar,
-          url,
-          response.headers.get("x-csrf-token") ?? undefined,
-        );
+        if (!options.skipPersist) {
+          await this.persistJar(
+            employeeId,
+            session,
+            jar,
+            url,
+            response.headers.get("x-csrf-token") ?? undefined,
+          );
+        }
         return options.returnEnvelope ? parsed : unwrapData(parsed);
       } catch (error) {
         lastError = error;
