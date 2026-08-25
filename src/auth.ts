@@ -46,8 +46,12 @@ export class AuthService {
   }
 
   authenticateByAgentId(agentId: string): AuthenticatedOwner | undefined {
-    const ownerId = this.ownerByAgentId.get(normalizeAgentId(agentId));
-    return ownerId ? { ownerId } : undefined;
+    const normalized = normalizeAgentId(agentId);
+    if (!isValidAgentId(normalized)) return undefined;
+    // 优先用预配置映射（可选，管理员可给特定 agent_id 绑定友好 ownerId）；
+    // 未预配置则动态以 agent_id 本身作为 ownerId（零预配置多租户）。
+    const ownerId = this.ownerByAgentId.get(normalized) ?? normalized;
+    return { ownerId };
   }
 }
 
@@ -57,4 +61,8 @@ function tokenDigest(token: string): string {
 
 function normalizeAgentId(agentId: string): string {
   return agentId.trim();
+}
+
+function isValidAgentId(agentId: string): boolean {
+  return /^[A-Za-z0-9._-]{8,200}$/.test(agentId);
 }
