@@ -3772,6 +3772,14 @@ export class YuqueWebClient {
   }
 
   private assertWriteTargetAllowed(targetUrl?: string): void {
+    // 组织空间全开：目标是组织 Host 则放行，写权限交给语雀账号体系兜底
+    if (
+      this.config.writeOrganizationOpen === true &&
+      targetUrl &&
+      this.contractHostTypeForTarget(targetUrl) === "organization"
+    ) {
+      return;
+    }
     if (this.config.writeBookAllowlist === undefined) return;
     if (!targetUrl) {
       throw new Error("A full knowledge-base or document URL is required");

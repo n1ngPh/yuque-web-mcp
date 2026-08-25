@@ -60,6 +60,7 @@ export interface AppConfig {
   allowObjectDeletion?: boolean;
   allowPermissionChanges?: boolean;
   writeBookAllowlist?: string[];
+  writeOrganizationOpen?: boolean;
   writeKillSwitch?: boolean;
   maxMcpSessions?: number;
   maxConcurrentRequests?: number;
@@ -175,6 +176,10 @@ export function loadConfig(): AppConfig {
     allowObjectDeletion: strictBoolean("ALLOW_OBJECT_DELETION", false),
     allowPermissionChanges: strictBoolean("ALLOW_PERMISSION_CHANGES", false),
     writeBookAllowlist,
+    writeOrganizationOpen: strictBoolean(
+      "YUQUE_WRITE_ORGANIZATION_OPEN",
+      false,
+    ),
     writeKillSwitch: strictBoolean("WRITE_KILL_SWITCH", false),
     maxMcpSessions: boundedPositiveInt("MAX_MCP_SESSIONS", 32, 10_000),
     maxConcurrentRequests: boundedPositiveInt(
