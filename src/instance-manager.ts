@@ -443,6 +443,7 @@ function serviceEnvironment(record: InstanceRecord): string {
     "ALLOW_OBJECT_DELETION=false",
     "ALLOW_PERMISSION_CHANGES=false",
     "YUQUE_WRITE_BOOK_ALLOWLIST=",
+    "YUQUE_WRITE_PERSONAL_OPEN=false",
     "ALLOW_INSECURE_HTTP=false",
     "MAX_MCP_SESSIONS=32",
     "MAX_CONCURRENT_REQUESTS=16",

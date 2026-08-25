@@ -61,6 +61,7 @@ export interface AppConfig {
   allowPermissionChanges?: boolean;
   writeBookAllowlist?: string[];
   writeOrganizationOpen?: boolean;
+  writePersonalOpen?: boolean;
   writeKillSwitch?: boolean;
   maxMcpSessions?: number;
   maxConcurrentRequests?: number;
@@ -178,6 +179,10 @@ export function loadConfig(): AppConfig {
     writeBookAllowlist,
     writeOrganizationOpen: strictBoolean(
       "YUQUE_WRITE_ORGANIZATION_OPEN",
+      false,
+    ),
+    writePersonalOpen: strictBoolean(
+      "YUQUE_WRITE_PERSONAL_OPEN",
       false,
     ),
     writeKillSwitch: strictBoolean("WRITE_KILL_SWITCH", false),
