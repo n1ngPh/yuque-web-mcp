@@ -701,6 +701,34 @@ export const toolDefinitions: ToolDefinition[] = [
     },
   },
   {
+    name: "yuque_import_file",
+    description:
+      "向指定知识库导入文件（markdown/word/excel），由语雀服务端解析并生成文档或表格。这是直接创建操作，不经过 Preview/Confirm。markdown 导入时，正文里以本地路径引用的图片不会跟随上传（语雀拿不到本地图片），导入后图片无法显示；word/excel 内嵌图片会随文件自动上传。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        book_url: stringProperty("目标知识库完整 URL。"),
+        file_type: {
+          type: "string",
+          enum: ["markdown", "word", "excel"],
+          description:
+            "文件类型。markdown 与 word 导入为文档 Doc，excel 导入为表格 Sheet。",
+        },
+        file_name: stringProperty(
+          "文件名（含扩展名，如 report.md、手册.docx、数据.xlsx）。",
+        ),
+        content: stringProperty(
+          "文件内容。file_type=markdown 时直接传 markdown 原文；file_type=word/excel 时传 base64 编码的文件二进制。",
+        ),
+        parent_uuid: stringProperty(
+          "可选：目标父目录 UUID（由 yuque_get_toc 返回）。不传则导入到知识库根目录。",
+        ),
+      },
+      required: ["book_url", "file_type", "file_name", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "yuque_confirm_change",
     description:
       "执行同一员工10分钟内的一次性preview。必须原样回传diff_digest；包含删除时先向用户展示Diff并明确确认，再设置confirm_deletions=true。结果unknown时严禁重试。",
@@ -1416,6 +1444,22 @@ export async function callTool(
         sectionHeading: optionalString(args, "section_heading"),
         newTitle: optionalString(args, "new_title"),
       });
+    case "yuque_import_file": {
+      const fileType = requireImportFileType(args);
+      const fileName = requireString(args, "file_name");
+      const content = requireString(args, "content");
+      const buffer = Buffer.from(
+        content,
+        fileType === "markdown" ? "utf8" : "base64",
+      );
+      return deps.client.importFile(employeeId, {
+        bookUrl: requireString(args, "book_url"),
+        fileType,
+        fileName,
+        content: buffer,
+        parentUuid: optionalString(args, "parent_uuid"),
+      });
+    }
     case "yuque_preview_create_sheet":
       return deps.changes.previewCreateSheet(employeeId, {
         bookUrl: requireString(args, "book_url"),
@@ -1563,6 +1607,16 @@ function requireString(args: Record<string, unknown>, name: string): string {
   const value = args[name];
   if (typeof value !== "string" || !value.trim())
     throw new Error(`${name} is required`);
+  return value;
+}
+
+function requireImportFileType(
+  args: Record<string, unknown>,
+): "markdown" | "word" | "excel" {
+  const value = requireString(args, "file_type").trim();
+  if (value !== "markdown" && value !== "word" && value !== "excel") {
+    throw new Error("file_type must be markdown, word or excel");
+  }
   return value;
 }
 

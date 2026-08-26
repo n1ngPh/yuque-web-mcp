@@ -53,7 +53,7 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
     "permission_changes_disabled",
     personal,
   ),
-  available("yuque_preview_change_catalog", personal),
+  available("yuque_preview_change_catalog", personalAndOrganization),
   available("yuque_preview_change_comment", personal),
   previewOnly("yuque_preview_delete_doc", "object_deletion_disabled", personal),
   previewOnly(
@@ -70,6 +70,7 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
   available("yuque_preview_update_doc", personalAndOrganization),
   available("yuque_preview_create_sheet", personal),
   available("yuque_preview_update_sheet", personalAndOrganization),
+  available("yuque_import_file", personalAndOrganization),
   previewOnly("yuque_confirm_change", "strict_mode_default"),
   available("yuque_cancel_change", local),
   available("yuque_list_snapshots", local),

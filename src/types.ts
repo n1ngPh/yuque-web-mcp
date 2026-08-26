@@ -76,6 +76,8 @@ export type CapabilityName =
   | "delete_book_collaborator"
   | "delete_doc"
   | "delete_book"
+  | "import"
+  | "import_result"
   | "logout";
 
 export interface EndpointContract {

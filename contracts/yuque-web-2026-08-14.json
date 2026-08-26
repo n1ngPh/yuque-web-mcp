@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-17-doc-sheet-native-export-options-56",
-  "verifiedAt": "2026-08-17T16:00:00.000Z",
+  "version": "2026-08-26-file-import-org-catalog-move-57",
+  "verifiedAt": "2026-08-26T03:00:00.000Z",
   "sourceBundles": [
     {
       "url": "https://gw.alipayobjects.com/os/chair-script/skylark/common.d114c29e.js",
@@ -445,10 +445,12 @@
       "capability": "change_catalog",
       "verified": true,
       "observedHostTypes": [
-        "personal"
+        "personal",
+        "organization"
       ],
       "verifiedHostTypes": [
-        "personal"
+        "personal",
+        "organization"
       ],
       "method": "PUT",
       "path": "/api/catalog_nodes",
@@ -497,9 +499,29 @@
             "document id, slug and URL remain unchanged",
             "closed-browser replay covers Doc and Sheet and restores both paths"
           ]
+        },
+        {
+          "id": "organization_doc_catalog_move_v1",
+          "verifiedHostType": "organization",
+          "verifiedAt": "2026-08-26T02:18:34.000Z",
+          "writeAttempts": 1,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 0,
+          "deleteRequests": 0,
+          "constraints": [
+            "organization Doc moved into a TITLE directory via PUT /api/catalog_nodes with action=prependChild",
+            "request body book_id + format=list + node_uuid + action=prependChild + target_uuid",
+            "response confirms the moved Doc parent_uuid equals the target directory and level=1",
+            "only move is enabled on the organization host; create/rename/delete remain personal-only"
+          ]
         }
       ],
-      "notes": "UI capture and closed-browser replay verified root/nested directory creation, rename, sibling/root movement, nesting and empty-group deletion, plus reversible Doc/Sheet catalog-entry moves. Non-empty group deletion remains disabled."
+      "notes": "UI capture and closed-browser replay verified root/nested directory creation, rename, sibling/root movement, nesting and empty-group deletion, plus reversible Doc/Sheet catalog-entry moves. Non-empty group deletion remains disabled.",
+      "liveWriteHostTypes": [
+        "personal",
+        "organization"
+      ]
     },
     {
       "capability": "list_docs",
@@ -1182,6 +1204,66 @@
         }
       ],
       "notes": "Pinned frontend evidence identifies docs.exports, the Doc/Sheet format matrix and the five-second non-terminal-state polling workflow. Live closed-browser replay and response URL validation completed for personal Doc, personal LakeSheet, organization Doc and organization LakeSheet. The result is an export artifact link, not a document mutation; Preview/Confirm is not used."
+    },
+    {
+      "capability": "import",
+      "verified": true,
+      "observedHostTypes": [
+        "organization",
+        "personal"
+      ],
+      "verifiedHostTypes": [
+        "organization",
+        "personal"
+      ],
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": [
+        "organization",
+        "personal"
+      ],
+      "method": "POST",
+      "path": "/api/import",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data.id"
+      ],
+      "verifiedScenarios": [
+        {
+          "id": "file-import-markdown-word-excel-har-v1",
+          "verifiedHostType": "organization",
+          "verifiedAt": "2026-08-26T00:00:00.000Z",
+          "writeAttempts": 3,
+          "retryAttempts": 0,
+          "unknownResponses": 0,
+          "browserStarts": 0,
+          "constraints": [
+            "four HAR captures pin the unified multipart POST /api/import schema across markdown, word and excel",
+            "markdown returns a synchronous full Doc under data with id, type=Doc, slug and body_asl",
+            "word and excel return data {id, type=doc, status=pending} and require import/result polling",
+            "markdown and word import to a lake Doc while excel imports to a lakesheet Sheet"
+          ]
+        }
+      ],
+      "notes": "Unified file import endpoint pinned by HAR captures. Multipart fields: book_id (numeric), type (markdown|word|excel), import_type=create, action=prependChild, insert_to_catalog=true, filename=file, file (binary), and options={\"enableLatex\":1} for markdown only. Markdown images referenced by local paths are not uploaded and are documented as a caller-facing limitation."
+    },
+    {
+      "capability": "import_result",
+      "verified": true,
+      "observedHostTypes": [
+        "organization",
+        "personal"
+      ],
+      "verifiedHostTypes": [
+        "organization",
+        "personal"
+      ],
+      "method": "POST",
+      "path": "/api/import/result",
+      "idempotent": false,
+      "requiredResponsePaths": [
+        "data"
+      ],
+      "notes": "Import completion polling endpoint. JSON body: files (a JSON-serialized string array [{id,type,name}]) and format (markdown|word|excel). Returns data as an array of {id,type,status,slug,format,title,url} with status=success on completion and format=lake for Doc or lakesheet for Sheet."
     },
     {
       "capability": "logout",
