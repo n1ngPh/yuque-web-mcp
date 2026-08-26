@@ -43,7 +43,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 # Dedicated venv for the DrissionPage captcha sidecar (SMS login). pip is a
 # build-time tool, so it is removed from the venv once the dependency is pinned.
 RUN python3 -m venv /opt/captcha-venv \
-  && /opt/captcha-venv/bin/pip install --no-cache-dir DrissionPage==4.1.1.2 \
+  && /opt/captcha-venv/bin/pip install --no-cache-dir DrissionPage==4.1.1.4 \
   && rm -rf /opt/captcha-venv/lib/python3*/site-packages/pip* \
             /opt/captcha-venv/lib/python3*/site-packages/setuptools* \
             /opt/captcha-venv/lib/python3*/site-packages/pkg_resources \
