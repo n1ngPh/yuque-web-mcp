@@ -109,7 +109,9 @@ describe("web endpoint contracts", () => {
     expect(registry.getWritable("publish_doc", "personal")).toMatchObject({
       liveWriteHostTypes: ["organization", "personal"],
     });
-    expect(registry.getWritable("save_doc_content", "organization")).toMatchObject({
+    expect(
+      registry.getWritable("save_doc_content", "organization"),
+    ).toMatchObject({
       liveWriteHostTypes: ["organization", "personal"],
     });
     expect(registry.getWritable("publish_doc", "organization")).toMatchObject({

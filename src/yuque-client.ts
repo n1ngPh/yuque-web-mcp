@@ -3747,8 +3747,7 @@ export class YuqueWebClient {
         candidate.groupLogin === locator.groupSlug &&
         candidate.slug === locator.bookSlug,
     );
-    if (!book)
-      throw new Error("Knowledge base is not visible to this user");
+    if (!book) throw new Error("Knowledge base is not visible to this user");
     return book;
   }
 

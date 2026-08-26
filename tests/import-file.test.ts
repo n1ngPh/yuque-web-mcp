@@ -58,9 +58,12 @@ describe("file import", () => {
     expect(result.format).toBe("lakesheet");
     expect(result.displayPath).toContain("target-dir");
 
-    const moves = fixture.catalogBodies().filter(
-      (body) => body.action === "prependChild" && body.target_uuid === "target-dir",
-    );
+    const moves = fixture
+      .catalogBodies()
+      .filter(
+        (body) =>
+          body.action === "prependChild" && body.target_uuid === "target-dir",
+      );
     expect(moves).toHaveLength(1);
     expect(moves[0]!.node_uuid).toBe("imported-node");
   });
@@ -130,9 +133,7 @@ async function createFixture(
               ? {
                   ...node,
                   parent_uuid:
-                    action === "prependChild"
-                      ? body.target_uuid
-                      : null,
+                    action === "prependChild" ? body.target_uuid : null,
                   level: action === "prependChild" ? 1 : 0,
                 }
               : node,
@@ -176,8 +177,7 @@ async function createFixture(
           name: string;
         }>;
         const file = files[0]!;
-        const format =
-          body.format === "excel" ? "lakesheet" : "lake";
+        const format = body.format === "excel" ? "lakesheet" : "lake";
         response.end(
           JSON.stringify({
             data: [
@@ -266,7 +266,9 @@ function rawNode(input: {
   };
 }
 
-function bookFixture(options: { organization?: boolean }): Record<string, unknown> {
+function bookFixture(options: {
+  organization?: boolean;
+}): Record<string, unknown> {
   return {
     id: 44,
     name: "yuque-web-mcp-e2e",
@@ -401,7 +403,9 @@ function parseMultipartFields(body: Buffer): Record<string, string> {
   return fields;
 }
 
-function readBody(request: import("node:http").IncomingMessage): Promise<Buffer> {
+function readBody(
+  request: import("node:http").IncomingMessage,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -413,7 +417,7 @@ function readBody(request: import("node:http").IncomingMessage): Promise<Buffer>
 function readJsonBody(
   request: import("node:http").IncomingMessage,
 ): Promise<Record<string, unknown>> {
-  return readBody(request).then((buffer) =>
-    JSON.parse(buffer.toString("utf8")) as Record<string, unknown>,
+  return readBody(request).then(
+    (buffer) => JSON.parse(buffer.toString("utf8")) as Record<string, unknown>,
   );
 }

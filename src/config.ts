@@ -181,10 +181,7 @@ export function loadConfig(): AppConfig {
       "YUQUE_WRITE_ORGANIZATION_OPEN",
       false,
     ),
-    writePersonalOpen: strictBoolean(
-      "YUQUE_WRITE_PERSONAL_OPEN",
-      false,
-    ),
+    writePersonalOpen: strictBoolean("YUQUE_WRITE_PERSONAL_OPEN", false),
     writeKillSwitch: strictBoolean("WRITE_KILL_SWITCH", false),
     maxMcpSessions: boundedPositiveInt("MAX_MCP_SESSIONS", 32, 10_000),
     maxConcurrentRequests: boundedPositiveInt(
@@ -296,10 +293,7 @@ function validateUsers(
     }
     if (user.agentId !== undefined) {
       const agentId = user.agentId.trim();
-      if (
-        agentId.length === 0 ||
-        !/^[A-Za-z0-9._-]{1,200}$/.test(agentId)
-      ) {
+      if (agentId.length === 0 || !/^[A-Za-z0-9._-]{1,200}$/.test(agentId)) {
         throw new Error(
           "agent_id must be 1-200 characters from A-Z, a-z, 0-9, . _ -",
         );

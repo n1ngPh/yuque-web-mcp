@@ -92,12 +92,16 @@ describe("multi-tenant boundaries", () => {
     // 会话按 owner 隔离
     const now = new Date().toISOString();
     await app.sessions.save("zhangsan", {
-      cookies: {}, csrfToken: "a",
-      account: { id: "1", login: "zhangsan" }, savedAt: now,
+      cookies: {},
+      csrfToken: "a",
+      account: { id: "1", login: "zhangsan" },
+      savedAt: now,
     });
     await app.sessions.save("lisi", {
-      cookies: {}, csrfToken: "b",
-      account: { id: "2", login: "lisi" }, savedAt: now,
+      cookies: {},
+      csrfToken: "b",
+      account: { id: "2", login: "lisi" },
+      savedAt: now,
     });
     expect((await app.sessions.load("zhangsan"))?.account.login).toBe(
       "zhangsan",
