@@ -4,6 +4,7 @@ import {
   type BrowserContext,
   type Page,
 } from "playwright-core";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { AppConfig } from "./config.js";
@@ -45,6 +46,10 @@ const ACTIVE_LOGIN_STATES: LoginStatus["state"][] = [
 
 const SMS_SEND_WAIT_MS = 120_000;
 
+// 定期清理已过期的登录 attempt（释放 attemptsById/attemptsByCode 的 entry
+// 及 screenshot Buffer，关闭其浏览器），防止长时间运行内存与线程累积。
+const ATTEMPT_SWEEP_INTERVAL_MS = 60_000;
+
 export const CHROMIUM_LAUNCH_ARGS = ["--disable-dev-shm-usage"] as const;
 // Playwright defaults chromiumSandbox to false for library launches and would
 // otherwise append --no-sandbox even when the caller did not provide that
@@ -57,7 +62,7 @@ export function chromiumLaunchOptions(config: AppConfig) {
   return {
     executablePath: config.chromiumExecutable,
     headless: true,
-    chromiumSandbox: CHROMIUM_SANDBOX_ENABLED,
+    chromiumSandbox: config.chromiumSandbox ?? CHROMIUM_SANDBOX_ENABLED,
     args: [...CHROMIUM_LAUNCH_ARGS],
     ...(proxy ? { proxy } : {}),
   };
@@ -73,6 +78,7 @@ export class LoginManager {
   private readonly attemptsByCode = new Map<string, LoginAttempt>();
 
   private readonly captcha: CaptchaSidecar;
+  private readonly sweepTimer: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly config: AppConfig,
@@ -89,6 +95,11 @@ export class LoginManager {
         browserPath: this.config.captchaBrowserPath,
         proxyUrl: this.config.yuqueHttpsProxy,
       });
+    this.sweepTimer = setInterval(
+      () => this.sweepExpiredAttempts(),
+      ATTEMPT_SWEEP_INTERVAL_MS,
+    );
+    this.sweepTimer.unref?.();
   }
 
   async begin(
@@ -359,6 +370,7 @@ export class LoginManager {
   }
 
   async shutdown(): Promise<void> {
+    clearInterval(this.sweepTimer);
     await Promise.all(
       [...this.attemptsById.values()].map((attempt) =>
         this.closeAttempt(attempt),
@@ -494,6 +506,7 @@ export class LoginManager {
       attempt.state = "failed";
       attempt.message =
         "登录流程失败；请检查 Chromium、网络或是否出现交互式验证码";
+      await this.killOrphanChromium();
     } finally {
       await this.closeBrowser(attempt);
     }
@@ -548,6 +561,35 @@ export class LoginManager {
         this.attemptsByCode.delete(attempt.publicCode);
       }
     }
+  }
+
+  // 定期清理已过期的 attempt：从两个 Map 删除、释放 screenshot Buffer、关闭浏览器。
+  // 否则 attemptsById 只增不减，长期运行内存线性增长（screenshot 尤其占内存）。
+  private sweepExpiredAttempts(): void {
+    const now = Date.now();
+    for (const [loginId, attempt] of this.attemptsById) {
+      if (attempt.expiresAt.getTime() > now) continue;
+      this.attemptsById.delete(loginId);
+      if (attempt.publicCode) this.attemptsByCode.delete(attempt.publicCode);
+      void this.closeBrowser(attempt).catch(() => undefined);
+    }
+  }
+
+  // chromium.launch 中途崩溃（如容器线程数超限导致 pthread_create 失败）时，
+  // playwright 不会清理已 spawn 的 zygote/renderer/crashpad 子进程，它们成为孤儿。
+  // 这里在失败路径兜底清理，避免孤儿进程累积顶满 cgroup pids 上限。
+  private killOrphanChromium(): Promise<void> {
+    return new Promise((resolve) => {
+      execFile(
+        "bash",
+        [
+          "-c",
+          `ps -eo pid,comm 2>/dev/null | awk '$2=="chromium" || $2=="chrome_crashpad_handler"{print $1}' | xargs -r kill -9 2>/dev/null || true`,
+        ],
+        { timeout: 5_000 },
+        () => resolve(),
+      );
+    });
   }
 
   private enqueueInteraction(

@@ -951,9 +951,15 @@ describe("Yuque HTTP replay client", () => {
   it("replays verified organization search and Markdown conversion schemas", async () => {
     let searchQuery: Record<string, string | null> = {};
     let conversionBody: Record<string, unknown> = {};
+    let host = "";
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://localhost");
       response.setHeader("Content-Type", "application/json");
+      if (url.pathname === "/api/mine/organizations") {
+        return response.end(
+          JSON.stringify({ data: [{ id: 9, name: "Acme", host }] }),
+        );
+      }
       if (url.pathname === "/api/zsearch") {
         for (const key of ["p", "q", "limit", "type", "tab", "scope"]) {
           searchQuery[key] = url.searchParams.get(key);
@@ -1000,6 +1006,7 @@ describe("Yuque HTTP replay client", () => {
         verifiedAt: new Date().toISOString(),
         sourceBundles: [],
         endpoints: [
+          endpoint("list_organizations", "/api/mine/organizations", ["data"]),
           endpoint("search", "/api/zsearch", [
             "data.hits",
             "data.totalHits",
@@ -1017,6 +1024,7 @@ describe("Yuque HTTP replay client", () => {
       }),
     );
     const origin = `http://127.0.0.1:${address.port}`;
+    host = origin;
     const sessions = new SessionStore(
       directory,
       new CryptoBox(randomBytes(32)),

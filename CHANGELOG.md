@@ -4,6 +4,8 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## Unreleased
 
+- Enable organization-host live write for Doc content edit (append/replace_section/delete_section/rename) and Doc creation, gated by Yuque account permissions via the new `YUQUE_WRITE_ORGANIZATION_OPEN` flag. Organization Host writes skip the exact per-book allowlist and rely on the Yuque account's own permissions; personal Host writes still require the exact allowlist. Also enables organization Host for the doc lock (`get_doc_lock`/`acquire_doc_lock`/`release_doc_lock`) and editor readback (`get_doc_editor`) contracts that the write-confirm path depends on.
+
 ## 1.2.0 - 2026-08-18
 
 - Add `yuque_get_export_options` so agents can show the exact target path, detect Doc versus LakeSheet, and let the user choose only formats verified for that type.

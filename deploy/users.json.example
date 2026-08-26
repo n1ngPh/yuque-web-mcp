@@ -1,0 +1,13 @@
+{
+  "users": [
+    {
+      "owner_id": "zhangsan",
+      "bearer_token": "请替换为随机生成的至少32字节的Token",
+      "agent_id": "xaid1.xxxxxxxx（可选，虾塘智能体ID，用于 REST /api/call 的 X-Agent-Id 认证）"
+    },
+    {
+      "owner_id": "lisi",
+      "bearer_token": "请替换为随机生成的至少32字节的Token"
+    }
+  ]
+}

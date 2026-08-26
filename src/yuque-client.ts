@@ -47,9 +47,11 @@ interface RequestOptions {
   pathParams?: Record<string, string | number>;
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
+  formData?: FormData;
   referer?: string;
   baseHost?: string;
   returnEnvelope?: boolean;
+  skipPersist?: boolean;
 }
 
 export type YuqueScopeType = "personal" | "organization";
@@ -466,6 +468,27 @@ export interface CreatedSheetResult {
   catalogMounted: boolean;
   reconciledAfterUnknownResponse: boolean;
 }
+
+export interface ImportedFileResult {
+  status: "success" | "failed";
+  id: number;
+  type: string;
+  slug: string;
+  format: string;
+  title: string;
+  url: string;
+  fileType: "markdown" | "word" | "excel";
+  fileName: string;
+  displayPath?: string;
+}
+
+export type YuqueImportFileType = "markdown" | "word" | "excel";
+
+const IMPORT_MIME_TYPES: Record<YuqueImportFileType, string> = {
+  markdown: "text/markdown",
+  word: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  excel: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
 
 export interface PreparedBookCreate {
   name: string;
@@ -1019,6 +1042,18 @@ export class YuqueWebClient {
         "Personal global search is not verified; provide a personal book_url for book-scoped search",
       );
     }
+    // organization 范围搜索（无 bookUrl）先解析 organization 真实 host，
+    // 避免 YUQUE_HOST 配错时静默退回全网公开搜索（假成功）。
+    let baseHost = book?.host;
+    let referer: string | undefined;
+    if (!book && scopeId !== "personal") {
+      const org = await this.resolveOrganizationSearchScope(
+        employeeId,
+        scopeId,
+      );
+      baseHost = org.host;
+      referer = `${org.host}/dashboard`;
+    }
     return this.request(employeeId, "search", {
       query: {
         p: 1,
@@ -1028,11 +1063,35 @@ export class YuqueWebClient {
         tab: book ? "book" : "organization",
         scope: book ? `${book.groupLogin}/${book.slug}` : "/",
       },
-      baseHost: book?.host ?? this.config.yuqueHost,
-      ...(book?.scopeType === "personal"
-        ? { referer: `${this.config.personalYuqueHost}/dashboard` }
-        : {}),
+      baseHost: baseHost ?? this.config.yuqueHost,
+      ...(referer
+        ? { referer }
+        : book?.scopeType === "personal"
+          ? { referer: `${this.config.personalYuqueHost}/dashboard` }
+          : {}),
     });
+  }
+
+  private async resolveOrganizationSearchScope(
+    employeeId: string,
+    scopeId: string,
+  ): Promise<YuqueScope> {
+    const scopes = await this.listScopes(employeeId);
+    const wantedId =
+      scopeId === "organization"
+        ? undefined
+        : scopeId.slice("organization:".length);
+    const org = scopes.scopes.find(
+      (scope) =>
+        scope.type === "organization" &&
+        (wantedId === undefined || scope.organizationId === Number(wantedId)),
+    );
+    if (!org) {
+      throw new ContractError(
+        `Organization scope ${scopeId} not found for this account`,
+      );
+    }
+    return org;
   }
 
   async getToc(
@@ -1052,8 +1111,14 @@ export class YuqueWebClient {
     const session = await this.sessions.load(employeeId);
     if (!session) throw new ReloginRequiredError();
     const book = await this.resolveBook(employeeId, input.bookUrl);
-    if (
-      book.scopeType !== "personal" ||
+    if (book.scopeType === "organization") {
+      // 组织空间只开放「移动」能力；create/rename/delete 目录分组仍在 personal 空间验证。
+      if (input.action !== "move") {
+        throw new ContractError(
+          "Catalog create/rename/delete is verified only for personal knowledge bases; organization spaces support document moves only",
+        );
+      }
+    } else if (
       book.ownerLogin !== session.account.login ||
       book.accessType !== "owner" ||
       !book.private
@@ -1198,8 +1263,22 @@ export class YuqueWebClient {
     throw new Error("Unsupported catalog action");
   }
 
-  assertCatalogChangeEnabled(targetUrl: string): void {
+  assertCatalogChangeEnabled(
+    targetUrl: string,
+    action?: CatalogChangeAction,
+  ): void {
     this.assertWriteTargetAllowed(targetUrl);
+    if (this.contractHostTypeForTarget(targetUrl) === "organization") {
+      // 组织空间只开放「移动」能力（mv.har 验证 PUT /api/catalog_nodes 的
+      // prependChild 移动），create/rename/delete 目录分组仍在 personal 空间验证。
+      if (action !== "move") {
+        throw new ContractError(
+          "Catalog create/rename/delete is verified only for personal knowledge bases; organization spaces support document moves only",
+        );
+      }
+      this.contracts.getWritable("change_catalog", "organization");
+      return;
+    }
     this.contracts.getWritable("change_catalog", "personal");
   }
 
@@ -1207,7 +1286,7 @@ export class YuqueWebClient {
     employeeId: string,
     input: CatalogChangeInput & { baselineFingerprint: string },
   ): Promise<Record<string, unknown>> {
-    this.assertCatalogChangeEnabled(input.bookUrl);
+    this.assertCatalogChangeEnabled(input.bookUrl, input.action);
     const prepared = await this.prepareCatalogChange(employeeId, input);
     if (prepared.baselineFingerprint !== input.baselineFingerprint) {
       throw new ContractError(
@@ -1939,11 +2018,7 @@ export class YuqueWebClient {
       return cached.documents;
     }
     const books = await this.listAllBooks(employeeId, scopeId);
-    const documents: LocatedDocument[] = [];
-    for (const book of books) {
-      const nodes = await this.loadCatalog(employeeId, book);
-      documents.push(...catalogDocuments(book, nodes));
-    }
+    const documents = await this.loadAllCatalogsConcurrently(employeeId, books);
     const deduplicated = deduplicateBy(
       documents,
       (document) => `${document.bookId}:${document.id}`,
@@ -1953,6 +2028,35 @@ export class YuqueWebClient {
       documents: deduplicated,
     });
     return deduplicated;
+  }
+
+  private async loadAllCatalogsConcurrently(
+    employeeId: string,
+    books: NormalizedBook[],
+  ): Promise<LocatedDocument[]> {
+    // 受限并发拉取每个知识库的目录，避免串行 20 个 get_toc 耗时过长。
+    // 走 requestUnlocked 绕过 per-employee 串行队列，并 skipPersist 跳过
+    // 写回 session（纯读请求不改变 Cookie/CSRF，且并发写 .tmp 会竞争）。
+    const concurrency = 5;
+    const collected: LocatedDocument[] = [];
+    for (let offset = 0; offset < books.length; offset += concurrency) {
+      const batch = books.slice(offset, offset + concurrency);
+      const results = await Promise.all(
+        batch.map(async (book) => {
+          const raw = await this.requestUnlocked(employeeId, "get_toc", {
+            query: { book_id: book.id },
+            baseHost: book.host,
+            skipPersist: true,
+          });
+          if (!Array.isArray(raw)) {
+            throw new ContractError("Yuque catalog response is not an array");
+          }
+          return catalogDocuments(book, normalizeCatalog(raw, book));
+        }),
+      );
+      for (const docs of results) collected.push(...docs);
+    }
+    return collected;
   }
 
   async prepareCreateTarget(
@@ -2930,6 +3034,124 @@ export class YuqueWebClient {
     };
   }
 
+  async importFile(
+    employeeId: string,
+    input: {
+      bookUrl: string;
+      fileType: YuqueImportFileType;
+      fileName: string;
+      content: Buffer;
+      parentUuid?: string;
+    },
+  ): Promise<ImportedFileResult> {
+    this.assertWriteTargetAllowed(input.bookUrl);
+    const book = await this.resolveBook(employeeId, input.bookUrl);
+    const session = await this.sessions.load(employeeId);
+    if (!session) throw new ReloginRequiredError();
+
+    const mimeType = IMPORT_MIME_TYPES[input.fileType];
+    const parentUuid = input.parentUuid?.trim() || undefined;
+    const form = new FormData();
+    form.append("book_id", String(book.id));
+    form.append("type", input.fileType);
+    form.append("import_type", "create");
+    form.append("action", "prependChild");
+    form.append("insert_to_catalog", "true");
+    form.append("filename", "file");
+    form.append(
+      "file",
+      new Blob([new Uint8Array(input.content)], { type: mimeType }),
+      input.fileName,
+    );
+    if (input.fileType === "markdown") {
+      form.append("options", JSON.stringify({ enableLatex: 1 }));
+    }
+
+    const imported = asRecord(
+      await this.request(employeeId, "import", {
+        formData: form,
+        baseHost: book.host,
+        referer: book.url,
+      }),
+      "Import response",
+    );
+    const id = requireNumber(imported, "id");
+    const importedType = requireStringValue(imported, "type");
+
+    const files = JSON.stringify([
+      { id, type: importedType, name: input.fileName },
+    ]);
+    const maxAttempts = 60;
+    const pollDelayMs = 2000;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const result = await this.request(employeeId, "import_result", {
+        body: { files, format: input.fileType },
+        baseHost: book.host,
+        referer: book.url,
+      });
+      if (!Array.isArray(result) || result.length === 0) {
+        throw new ContractError(
+          "Import result response is not a non-empty array",
+        );
+      }
+      const item = asRecord(result[0], "Import result item");
+      const status = requireStringValue(item, "status");
+      if (status === "success") {
+        const imported: ImportedFileResult = {
+          status: "success",
+          id,
+          type: requireStringValue(item, "type"),
+          slug: requireStringValue(item, "slug"),
+          format: requireStringValue(item, "format"),
+          title: requireStringValue(item, "title"),
+          url: requireStringValue(item, "url"),
+          fileType: input.fileType,
+          fileName: input.fileName,
+        };
+        // 指定了 parent_uuid 时，导入后把文档移动到目标目录
+        // （语雀 import 本身不支持目录，固定落到知识库根目录）
+        if (parentUuid) {
+          const nodes = await this.loadCatalog(employeeId, book);
+          const node = nodes.find((candidate) => candidate.docId === id);
+          if (!node) {
+            throw new ContractError(
+              "Imported document was not found in the catalog for relocation",
+            );
+          }
+          const prepared = await this.prepareCatalogChange(employeeId, {
+            bookUrl: input.bookUrl,
+            action: "move",
+            nodeUuid: node.uuid,
+            targetUuid: parentUuid,
+            position: "into",
+          });
+          const moved = await this.changeCatalog(employeeId, {
+            bookUrl: input.bookUrl,
+            action: "move",
+            nodeUuid: node.uuid,
+            targetUuid: parentUuid,
+            position: "into",
+            baselineFingerprint: prepared.baselineFingerprint,
+          });
+          const displayPath = (moved as Record<string, unknown>).display_path;
+          if (typeof displayPath === "string") {
+            imported.displayPath = displayPath;
+          }
+        }
+        return imported;
+      }
+      if (status === "failed" || status === "error") {
+        throw new ContractError(
+          `File import failed with status '${status}' for '${input.fileName}'`,
+        );
+      }
+      await sleep(pollDelayMs);
+    }
+    throw new ContractError(
+      `File import did not complete within ${maxAttempts} polls for '${input.fileName}'`,
+    );
+  }
+
   async createDoc(
     employeeId: string,
     input: {
@@ -3583,7 +3805,7 @@ export class YuqueWebClient {
         const response = await this.fetchWithSession(
           url,
           contract.method,
-          options.body,
+          options.formData ?? options.body,
           session,
           jar,
           options.referer,
@@ -3602,13 +3824,15 @@ export class YuqueWebClient {
             `Yuque web request failed (${response.status})`,
           );
         assertRequiredPaths(parsed, contract.requiredResponsePaths);
-        await this.persistJar(
-          employeeId,
-          session,
-          jar,
-          url,
-          response.headers.get("x-csrf-token") ?? undefined,
-        );
+        if (!options.skipPersist) {
+          await this.persistJar(
+            employeeId,
+            session,
+            jar,
+            url,
+            response.headers.get("x-csrf-token") ?? undefined,
+          );
+        }
         return options.returnEnvelope ? parsed : unwrapData(parsed);
       } catch (error) {
         lastError = error;
@@ -3645,7 +3869,10 @@ export class YuqueWebClient {
       "x-csrf-token": session.csrfToken,
       "x-login": session.account.login,
     };
-    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const isFormData =
+      typeof FormData !== "undefined" && body instanceof FormData;
+    if (body !== undefined && !isFormData)
+      headers["Content-Type"] = "application/json";
 
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -3656,7 +3883,9 @@ export class YuqueWebClient {
       const response = await fetch(url, {
         method,
         headers,
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined
+          ? {}
+          : { body: isFormData ? (body as FormData) : JSON.stringify(body) }),
         redirect: "manual",
         signal: controller.signal,
         ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
@@ -3711,6 +3940,22 @@ export class YuqueWebClient {
   }
 
   private assertWriteTargetAllowed(targetUrl?: string): void {
+    // 组织空间全开：目标是组织 Host 则放行，写权限交给语雀账号体系兜底
+    if (
+      this.config.writeOrganizationOpen === true &&
+      targetUrl &&
+      this.contractHostTypeForTarget(targetUrl) === "organization"
+    ) {
+      return;
+    }
+    // 个人空间全开：目标是个人 Host 则放行，写权限同样交给语雀账号体系兜底
+    if (
+      this.config.writePersonalOpen === true &&
+      targetUrl &&
+      this.contractHostTypeForTarget(targetUrl) === "personal"
+    ) {
+      return;
+    }
     if (this.config.writeBookAllowlist === undefined) return;
     if (!targetUrl) {
       throw new Error("A full knowledge-base or document URL is required");
@@ -4039,7 +4284,8 @@ function normalizeOrganizationScope(
   const advertisedHost = optionalStringValue(record.host);
   if (advertisedHost && !sameHostname(advertisedHost, configuredHost)) {
     throw new ContractError(
-      "Yuque organization host does not match the configured company host",
+      `Yuque organization host does not match the configured company host ` +
+        `(advertisedHost=${advertisedHost}, configuredHost=${configuredHost})`,
     );
   }
   return {
@@ -4644,6 +4890,10 @@ function workbookCellFingerprint(workbook: NormalizedWorkbook): string {
       ),
     })),
   );
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

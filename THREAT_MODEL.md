@@ -39,4 +39,4 @@ Yuque web interfaces do not provide a reliable atomic compare-and-swap primitive
 
 The derived Chromium seccomp profile deliberately exposes `chroot`, `clone`, `setns`, and `unshare` so Chromium can create its own user-namespace sandbox under `cap_drop=ALL`. This is a larger syscall surface than Docker's default profile, but materially safer than running Chromium with `--no-sandbox`; the browser remains constrained by the other container controls and is not kept for business requests.
 
-Deep editing of unknown Lake blocks, attachments, boards, and advanced Sheet features remains disabled rather than serialized approximately.
+Deep editing of unknown Lake blocks, boards, and advanced Sheet features remains disabled rather than serialized approximately. File import (markdown/word/excel) is supported through Yuque's native `/api/import` endpoint; markdown images referenced by local paths are not uploaded with the file.

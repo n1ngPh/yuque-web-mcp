@@ -66,7 +66,7 @@ describe("web endpoint contracts", () => {
       method: "GET",
       path: "/api/docs/{docId}/lock",
       verified: true,
-      verifiedHostTypes: ["personal"],
+      verifiedHostTypes: ["organization", "personal"],
     });
     const create = registry.manifest.endpoints.find(
       (entry) => entry.capability === "create_sheet",
@@ -104,17 +104,17 @@ describe("web endpoint contracts", () => {
       registry.getWritable("save_sheet_content", "personal"),
     ).toMatchObject({ liveWriteHostTypes: ["personal"] });
     expect(registry.getWritable("save_doc_content", "personal")).toMatchObject({
-      liveWriteHostTypes: ["personal"],
+      liveWriteHostTypes: ["organization", "personal"],
     });
     expect(registry.getWritable("publish_doc", "personal")).toMatchObject({
-      liveWriteHostTypes: ["personal"],
+      liveWriteHostTypes: ["organization", "personal"],
     });
-    expect(() =>
-      registry.getWritable("save_doc_content", "organization"),
-    ).toThrow("not enabled on the organization Host");
-    expect(() => registry.getWritable("publish_doc", "organization")).toThrow(
-      "not enabled on the organization Host",
-    );
+    expect(registry.getWritable("save_doc_content", "organization")).toMatchObject({
+      liveWriteHostTypes: ["organization", "personal"],
+    });
+    expect(registry.getWritable("publish_doc", "organization")).toMatchObject({
+      liveWriteHostTypes: ["organization", "personal"],
+    });
     expect(registry.getWritable("create_book", "personal")).toMatchObject({
       method: "POST",
       path: "/api/books",

@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import type { UserCredentials } from "./types.js";
 
 function required(name: string): string {
   const value = secretValue(name)?.trim();
@@ -36,6 +37,7 @@ function boundedPositiveInt(
 export interface AppConfig {
   ownerId: string;
   mcpBearerToken: string;
+  users?: UserCredentials[];
   host: string;
   port: number;
   publicBaseUrl: string;
@@ -49,6 +51,7 @@ export interface AppConfig {
   allowedOrigins: string[];
   encryptionKey: Buffer;
   chromiumExecutable: string;
+  chromiumSandbox?: boolean;
   loginTtlSeconds: number;
   changeTtlSeconds: number;
   requestTimeoutMs: number;
@@ -57,6 +60,8 @@ export interface AppConfig {
   allowObjectDeletion?: boolean;
   allowPermissionChanges?: boolean;
   writeBookAllowlist?: string[];
+  writeOrganizationOpen?: boolean;
+  writePersonalOpen?: boolean;
   writeKillSwitch?: boolean;
   maxMcpSessions?: number;
   maxConcurrentRequests?: number;
@@ -90,16 +95,11 @@ export function loadConfig(): AppConfig {
       "NODE_TLS_REJECT_UNAUTHORIZED=0 is forbidden; configure a trusted CA file instead",
     );
   }
-  const ownerId = required("MCP_OWNER_ID");
-  if (!/^[A-Za-z0-9._@-]{1,128}$/.test(ownerId)) {
-    throw new Error(
-      "MCP_OWNER_ID must be 1-128 characters from A-Z, a-z, 0-9, . _ @ -",
-    );
-  }
-  const mcpBearerToken = required("MCP_BEARER_TOKEN");
-  if (Buffer.byteLength(mcpBearerToken, "utf8") < 32) {
-    throw new Error("MCP_BEARER_TOKEN must contain at least 32 bytes");
-  }
+  const users = loadUsers();
+  const firstUser = users[0];
+  if (!firstUser) throw new Error("At least one user is required");
+  const ownerId = firstUser.ownerId;
+  const mcpBearerToken = firstUser.bearerToken;
   const host = process.env.HOST?.trim() || "127.0.0.1";
   const port = positiveInt("PORT", 3000);
   const dataDir = resolve(process.env.DATA_DIR?.trim() || "./runtime");
@@ -146,6 +146,7 @@ export function loadConfig(): AppConfig {
 
   const chromiumExecutable =
     process.env.CHROMIUM_EXECUTABLE?.trim() || "/usr/bin/chromium";
+  const chromiumSandbox = strictBoolean("CHROMIUM_SANDBOX", true);
   const captchaSolvePath = resolve(
     process.env.CAPTCHA_SOLVE_PATH?.trim() || "./captcha/solve.py",
   );
@@ -153,6 +154,7 @@ export function loadConfig(): AppConfig {
   return {
     ownerId,
     mcpBearerToken,
+    users,
     host,
     port,
     publicBaseUrl,
@@ -166,6 +168,7 @@ export function loadConfig(): AppConfig {
     allowedOrigins: splitList(process.env.MCP_ALLOWED_ORIGINS),
     encryptionKey: decode32ByteSecret("SESSION_ENCRYPTION_KEY"),
     chromiumExecutable,
+    chromiumSandbox,
     loginTtlSeconds: positiveInt("LOGIN_TTL_SECONDS", 300),
     changeTtlSeconds: positiveInt("CHANGE_TTL_SECONDS", 600),
     requestTimeoutMs: positiveInt("YUQUE_REQUEST_TIMEOUT_MS", 15000),
@@ -174,6 +177,14 @@ export function loadConfig(): AppConfig {
     allowObjectDeletion: strictBoolean("ALLOW_OBJECT_DELETION", false),
     allowPermissionChanges: strictBoolean("ALLOW_PERMISSION_CHANGES", false),
     writeBookAllowlist,
+    writeOrganizationOpen: strictBoolean(
+      "YUQUE_WRITE_ORGANIZATION_OPEN",
+      false,
+    ),
+    writePersonalOpen: strictBoolean(
+      "YUQUE_WRITE_PERSONAL_OPEN",
+      false,
+    ),
     writeKillSwitch: strictBoolean("WRITE_KILL_SWITCH", false),
     maxMcpSessions: boundedPositiveInt("MAX_MCP_SESSIONS", 32, 10_000),
     maxConcurrentRequests: boundedPositiveInt(
@@ -196,7 +207,7 @@ export function loadConfig(): AppConfig {
       1_572_864,
       16 * 1024 * 1024,
     ),
-    maxConcurrentLogins: boundedPositiveInt("MAX_CONCURRENT_LOGINS", 2, 32),
+    maxConcurrentLogins: boundedPositiveInt("MAX_CONCURRENT_LOGINS", 16, 32),
     gracefulShutdownSeconds: boundedPositiveInt(
       "GRACEFUL_SHUTDOWN_SECONDS",
       30,
@@ -212,6 +223,102 @@ export function loadConfig(): AppConfig {
     captchaBrowserPath:
       process.env.CAPTCHA_BROWSER_PATH?.trim() || chromiumExecutable,
   };
+}
+
+function loadUsers(): UserCredentials[] {
+  const file = process.env.MCP_USERS_FILE?.trim();
+  if (file) return loadUsersFromFile(file);
+  const agentId = process.env.MCP_AGENT_ID?.trim() || undefined;
+  return validateUsers(
+    [
+      {
+        ownerId: required("MCP_OWNER_ID"),
+        bearerToken: required("MCP_BEARER_TOKEN"),
+        ...(agentId ? { agentId } : {}),
+      },
+    ],
+    "MCP_OWNER_ID",
+  );
+}
+
+function loadUsersFromFile(file: string): UserCredentials[] {
+  const path = privateRegularFile(file, "MCP_USERS_FILE");
+  const serialized = readFileSync(path, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    throw new Error("MCP_USERS_FILE must contain valid JSON");
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    !Array.isArray((parsed as { users?: unknown }).users)
+  ) {
+    throw new Error('MCP_USERS_FILE must be an object with a "users" array');
+  }
+  const rawUsers = (parsed as { users: unknown[] }).users;
+  const users: UserCredentials[] = [];
+  for (const raw of rawUsers) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Each entry in MCP_USERS_FILE must be an object");
+    }
+    const entry = raw as Record<string, unknown>;
+    users.push({
+      ownerId: typeof entry.owner_id === "string" ? entry.owner_id : "",
+      bearerToken:
+        typeof entry.bearer_token === "string" ? entry.bearer_token : "",
+      agentId: typeof entry.agent_id === "string" ? entry.agent_id : undefined,
+    });
+  }
+  return validateUsers(users, "MCP_USERS_FILE owner_id");
+}
+
+function validateUsers(
+  users: UserCredentials[],
+  ownerLabel: string,
+): UserCredentials[] {
+  if (users.length === 0) {
+    throw new Error("At least one user is required");
+  }
+  const seenOwnerIds = new Set<string>();
+  const seenTokens = new Set<string>();
+  const seenAgentIds = new Set<string>();
+  for (const user of users) {
+    if (!/^[A-Za-z0-9._@-]{1,128}$/.test(user.ownerId)) {
+      throw new Error(
+        `${ownerLabel} must be 1-128 characters from A-Z, a-z, 0-9, . _ @ -`,
+      );
+    }
+    if (Buffer.byteLength(user.bearerToken, "utf8") < 32) {
+      throw new Error("MCP_BEARER_TOKEN must contain at least 32 bytes");
+    }
+    if (user.agentId !== undefined) {
+      const agentId = user.agentId.trim();
+      if (
+        agentId.length === 0 ||
+        !/^[A-Za-z0-9._-]{1,200}$/.test(agentId)
+      ) {
+        throw new Error(
+          "agent_id must be 1-200 characters from A-Z, a-z, 0-9, . _ -",
+        );
+      }
+      if (seenAgentIds.has(agentId)) {
+        throw new Error(`Duplicate agent_id: ${agentId}`);
+      }
+      seenAgentIds.add(agentId);
+    }
+    if (seenOwnerIds.has(user.ownerId)) {
+      throw new Error(`Duplicate owner_id: ${user.ownerId}`);
+    }
+    if (seenTokens.has(user.bearerToken)) {
+      throw new Error("Duplicate bearer_token");
+    }
+    seenOwnerIds.add(user.ownerId);
+    seenTokens.add(user.bearerToken);
+  }
+  return users;
 }
 
 export function loadEnvironmentFile(): void {

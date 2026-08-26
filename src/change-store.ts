@@ -79,12 +79,16 @@ export class ChangeStore {
   private acceptingConfirms = true;
   private activeConfirms = 0;
 
+  private readonly ownerId: string;
+
   constructor(
     private readonly config: AppConfig,
     private readonly db: AppDatabase,
     private readonly crypto: CryptoBox,
     private readonly client: YuqueWebClient,
+    ownerId?: string,
   ) {
+    this.ownerId = ownerId ?? config.ownerId;
     this.db.purgeExpiredSnapshots();
     for (const row of this.db.markInterruptedChangesUnknown()) {
       this.audit(row, "unknown", "process_interrupted");
@@ -1173,7 +1177,7 @@ export class ChangeStore {
     return this.db.listSnapshots(targetHash).map((row) => {
       const payload = this.crypto.decrypt<SnapshotPayload>(
         row.encrypted_payload,
-        snapshotContext(row.snapshot_id, this.config.ownerId),
+        snapshotContext(row.snapshot_id, this.ownerId),
       );
       return {
         snapshot_id: row.snapshot_id,
@@ -1945,7 +1949,7 @@ export class ChangeStore {
         "Snapshot restore requires an exact whole-document baseline",
       );
     }
-    return this.previewUpdate(this.config.ownerId, {
+    return this.previewUpdate(this.ownerId, {
       docUrl: payload.docUrl,
       mode: payload.mode,
       ...(payload.markdown !== undefined
@@ -2044,7 +2048,7 @@ export class ChangeStore {
       kind: payload.kind,
       encrypted_payload: this.crypto.encrypt(
         payload,
-        changeContext(changeToken, this.config.ownerId),
+        changeContext(changeToken, this.ownerId),
       ),
       expires_at: expiresAt.toISOString(),
       consumed_at: null,
@@ -2091,7 +2095,7 @@ export class ChangeStore {
     }
     const payload = this.crypto.decrypt<PendingChangePayload>(
       row.encrypted_payload,
-      changeContext(changeToken, this.config.ownerId),
+      changeContext(changeToken, this.ownerId),
     );
     if (payload.schemaVersion !== 3 || payload.kind !== row.kind) {
       throw new Error("Encrypted change schema or kind mismatch");
@@ -2121,7 +2125,7 @@ export class ChangeStore {
       resource_type: "doc",
       encrypted_payload: this.crypto.encrypt(
         payload,
-        snapshotContext(snapshotId, this.config.ownerId),
+        snapshotContext(snapshotId, this.ownerId),
       ),
       created_at: createdAt.toISOString(),
       expires_at: new Date(
@@ -2161,7 +2165,7 @@ export class ChangeStore {
       resource_type: "sheet",
       encrypted_payload: this.crypto.encrypt(
         payload,
-        snapshotContext(snapshotId, this.config.ownerId),
+        snapshotContext(snapshotId, this.ownerId),
       ),
       created_at: createdAt.toISOString(),
       expires_at: new Date(
@@ -2185,7 +2189,7 @@ export class ChangeStore {
     if (!row) throw new Error("Snapshot not found or expired");
     return this.crypto.decrypt<SnapshotPayload>(
       row.encrypted_payload,
-      snapshotContext(snapshotId, this.config.ownerId),
+      snapshotContext(snapshotId, this.ownerId),
     );
   }
 
@@ -2206,7 +2210,7 @@ export class ChangeStore {
   }
 
   private assertOwner(ownerId: string): void {
-    if (ownerId !== this.config.ownerId) throw new Error("Owner mismatch");
+    if (ownerId !== this.ownerId) throw new Error("Owner mismatch");
   }
 }
 
