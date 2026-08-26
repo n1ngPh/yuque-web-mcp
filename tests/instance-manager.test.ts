@@ -28,11 +28,11 @@ afterEach(async () => {
 });
 
 describe("single-owner instance manager", () => {
-  it("creates opaque isolated instances without storing employee aliases", async () => {
+  it("creates opaque isolated instances without storing user aliases", async () => {
     const root = await temporaryRoot();
     const manager = new InstanceManager({ root });
-    const first = await manager.create("employee-alice", { port: 19081 });
-    const second = await manager.create("employee-bob", {
+    const first = await manager.create("user-alice", { port: 19081 });
+    const second = await manager.create("user-bob", {
       port: 19082,
       publicBaseUrl: "https://mcp.example.test/bob",
       image: "registry.example.test/yuque-web-mcp:0.6.0",
@@ -75,8 +75,8 @@ describe("single-owner instance manager", () => {
     ).toBe(0o600);
 
     const indexText = await readFile(join(root, "index.json"), "utf8");
-    expect(indexText).not.toContain("employee-alice");
-    expect(indexText).not.toContain("employee-bob");
+    expect(indexText).not.toContain("user-alice");
+    expect(indexText).not.toContain("user-bob");
     const index = JSON.parse(indexText) as { instances: unknown[] };
     expect(index.instances).toHaveLength(2);
     expect(
@@ -109,33 +109,33 @@ describe("single-owner instance manager", () => {
   it("rejects duplicate aliases, ports, mutable images and unsafe roots", async () => {
     const root = await temporaryRoot();
     const manager = new InstanceManager({ root });
-    await manager.create("employee-a", { port: 19101 });
-    await expect(manager.create("employee-a", { port: 19102 })).rejects.toThrow(
+    await manager.create("user-a", { port: 19101 });
+    await expect(manager.create("user-a", { port: 19102 })).rejects.toThrow(
       "already exists",
     );
-    await expect(manager.create("employee-b", { port: 19101 })).rejects.toThrow(
+    await expect(manager.create("user-b", { port: 19101 })).rejects.toThrow(
       "already assigned",
     );
     await expect(
-      manager.create("employee-c", {
+      manager.create("user-c", {
         port: 19103,
         image: "yuque-web-mcp:latest",
       }),
     ).rejects.toThrow("latest");
     await expect(
-      manager.create("employee-c", {
+      manager.create("user-c", {
         port: 19103,
         image: "registry.example.test/yuque-web-mcp",
       }),
     ).rejects.toThrow("fixed tag or an exact sha256 digest");
     await expect(
-      manager.create("employee-c", {
+      manager.create("user-c", {
         port: 19103,
         image: "registry.example.test/yuque-web-mcp@sha256:not-a-digest",
       }),
     ).rejects.toThrow("exact sha256");
     await expect(
-      manager.create("employee-c", {
+      manager.create("user-c", {
         port: 19103,
         publicBaseUrl: "http://192.0.2.10:19103",
       }),
@@ -151,7 +151,7 @@ describe("single-owner instance manager", () => {
       root,
       chromiumSeccompProfilePath: join(root, "missing.json"),
     });
-    await expect(missing.create("employee-a", { port: 19105 })).rejects.toThrow(
+    await expect(missing.create("user-a", { port: 19105 })).rejects.toThrow(
       "Unable to load Chromium seccomp profile",
     );
 
@@ -165,7 +165,7 @@ describe("single-owner instance manager", () => {
       root,
       chromiumSeccompProfilePath: unsafePath,
     });
-    await expect(unsafe.create("employee-b", { port: 19106 })).rejects.toThrow(
+    await expect(unsafe.create("user-b", { port: 19106 })).rejects.toThrow(
       "must default-deny",
     );
   });
@@ -177,7 +177,7 @@ describe("single-owner instance manager", () => {
     try {
       process.chdir(unrelatedDirectory);
       const manager = new InstanceManager({ root });
-      const created = await manager.create("employee-cwd", { port: 19107 });
+      const created = await manager.create("user-cwd", { port: 19107 });
       await expect(
         readFile(
           join(String(created.directory), "chromium-seccomp.json"),
@@ -204,18 +204,18 @@ describe("single-owner instance manager", () => {
       };
     };
     const manager = new InstanceManager({ root, runner });
-    const created = await manager.create("employee-a", { port: 19111 });
-    await expect(manager.start("employee-a")).resolves.toMatchObject({
+    const created = await manager.create("user-a", { port: 19111 });
+    await expect(manager.start("user-a")).resolves.toMatchObject({
       status: "started",
       instance_id: created.instance_id,
     });
-    await expect(manager.status("employee-a")).resolves.toMatchObject({
+    await expect(manager.status("user-a")).resolves.toMatchObject({
       compose_status: [{ State: "running", Health: "healthy" }],
     });
     expect(calls).toHaveLength(2);
     expect(calls[0]?.executable).toBe("docker");
     expect(calls[0]?.args).toContain("up");
-    expect(calls[0]?.args.join(" ")).not.toContain("employee-a");
+    expect(calls[0]?.args.join(" ")).not.toContain("user-a");
     expect(calls[0]?.args.join(" ")).not.toContain("MCP_BEARER_TOKEN");
   });
 
@@ -225,7 +225,7 @@ describe("single-owner instance manager", () => {
       root,
       now: () => new Date("2026-08-16T01:02:03.000Z"),
     });
-    const created = await manager.create("employee-a", { port: 19121 });
+    const created = await manager.create("user-a", { port: 19121 });
     const data = join(String(created.directory), "data");
     const database = new AppDatabase(join(data, "state.db"));
     database.close();
@@ -235,7 +235,7 @@ describe("single-owner instance manager", () => {
       randomBytes(32),
       { mode: 0o600 },
     );
-    const result = await manager.backup("employee-a");
+    const result = await manager.backup("user-a");
     const backup = String(result.backup_directory);
     expect(result).toMatchObject({
       status: "backed_up",
@@ -268,12 +268,12 @@ describe("single-owner instance manager", () => {
       return commandResult(failed ? 1 : 0);
     };
     const manager = new InstanceManager({ root, runner });
-    const created = await manager.create("employee-a", {
+    const created = await manager.create("user-a", {
       port: 19131,
       image: "yuque-web-mcp:0.6.0",
     });
     await expect(
-      manager.upgrade("employee-a", "yuque-web-mcp:0.6.1"),
+      manager.upgrade("user-a", "yuque-web-mcp:0.6.1"),
     ).resolves.toMatchObject({
       status: "upgraded",
       previous_image: "yuque-web-mcp:0.6.0",
@@ -286,7 +286,7 @@ describe("single-owner instance manager", () => {
 
     failPull = true;
     await expect(
-      manager.upgrade("employee-a", "yuque-web-mcp:0.6.2"),
+      manager.upgrade("user-a", "yuque-web-mcp:0.6.2"),
     ).rejects.toThrow("docker compose pull failed");
     expect(await readFile(composePath, "utf8")).toContain(
       "yuque-web-mcp:0.6.1",

@@ -99,7 +99,7 @@ describe("MCP public surface", () => {
     expect(
       result.tools.find((tool) => tool.name === "yuque_preview_change_comment")
         ?.description,
-    ).toContain("当前员工自己的评论");
+    ).toContain("当前用户自己的评论");
     await client.close();
     await server.close();
   });

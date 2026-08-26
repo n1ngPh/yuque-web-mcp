@@ -3,13 +3,13 @@
 ## Preflight
 
 1. Use a fixed image tag or digest.
-2. Keep one data directory and secret set per employee.
+2. Keep one data directory and secret set per user.
 3. Bind the container to loopback and terminate HTTPS at a reverse proxy.
 4. Run `admin doctor` and check `/readyz` before client registration.
 5. Keep `WRITE_KILL_SWITCH=true` during initial login and read-only validation, then explicitly choose the write policy.
 6. Keep `deploy/chromium-seccomp.json` attached through `security_opt`, together with non-root execution, `read_only`, `cap_drop=ALL`, and `no-new-privileges`. Never substitute `seccomp=unconfined` or Chromium no-sandbox flags.
 
-Before registering an employee, exercise one QR-login browser launch in the final container and inspect the launch command. It must succeed without `--no-sandbox` or `--disable-setuid-sandbox`. The shipped profile is derived from Playwright `v1.62.1` commit `26a9e470a7b3c7822084b09fb7f13902c5f37b51` and adds unconditional `chroot` for the user-namespace sandbox under `cap_drop=ALL`; its expected SHA-256 is `b3995c4964bc2e3e7e87f38df281e5ad8cd8bfb76c6b31b65dea159d46cf1fdb`.
+Before registering an user, exercise one QR-login browser launch in the final container and inspect the launch command. It must succeed without `--no-sandbox` or `--disable-setuid-sandbox`. The shipped profile is derived from Playwright `v1.62.1` commit `26a9e470a7b3c7822084b09fb7f13902c5f37b51` and adds unconditional `chroot` for the user-namespace sandbox under `cap_drop=ALL`; its expected SHA-256 is `b3995c4964bc2e3e7e87f38df281e5ad8cd8bfb76c6b31b65dea159d46cf1fdb`.
 
 ## Backup and restore
 
@@ -34,7 +34,7 @@ Restore creates a private pre-restore rollback directory and verifies the backup
 
 ## Secret rotation
 
-Stop the instance first. Token rotation prints the new token once so it can be placed in the employee's MCP client:
+Stop the instance first. Token rotation prints the new token once so it can be placed in the user's MCP client:
 
 ```bash
 YUQUE_MCP_ENV_FILE=/absolute/path/service.env npm run admin -- rotate-token

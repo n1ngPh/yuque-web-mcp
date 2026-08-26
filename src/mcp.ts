@@ -54,18 +54,18 @@ interface ToolDefinition {
 
 export const MCP_INSTRUCTIONS = `语雀网页会话 MCP（安全自托管版）。
 能力发现规则：任何工作流开始前优先调用 yuque_get_capabilities。availability=disabled 的能力不得尝试；preview_only 只允许生成本地Diff，不代表可以远程Confirm。WRITE_CONSISTENCY_MODE默认strict，缺少可靠并发保护时远程Confirm会在发包前失败关闭；只有部署者显式启用best_effort且目标命中精确知识库白名单（或组织空间设置 YUQUE_WRITE_ORGANIZATION_OPEN=true 放开精确清单、改由语雀账号权限兜底）时才允许进入已验证写契约。
-个人/空间作用域规则：先调用 yuque_list_scopes 发现当前员工可用作用域。读取个人空间时给列表或索引工具显式传 scope_id=personal；读取公司空间时传 scope_id=organization 或返回的 organization:<id>。给定完整知识库或文档URL的工具会自动识别Host和作用域。不得调用或猜测网页全局“切换空间”接口，因为并发会话之间不能共享可变上下文。
+个人/空间作用域规则：先调用 yuque_list_scopes 发现当前用户可用作用域。读取个人空间时给列表或索引工具显式传 scope_id=personal；读取公司空间时传 scope_id=organization 或返回的 organization:<id>。给定完整知识库或文档URL的工具会自动识别Host和作用域。不得调用或猜测网页全局“切换空间”接口，因为并发会话之间不能共享可变上下文。
 强制路径提示规则：用户询问任何文档或目录时，回答正文、摘要或目录内容之前，必须先输出“完整路径：<个人：姓名或空间：组织 / 知识库名 / 目录层级 / 文档名>”和对应URL。不得只报标题。若同名结果位于不同路径，必须列出每个候选的完整路径和URL并让用户确认，未确认前不得自行选择。
 删除边界规则：Doc、Sheet和个人知识库整对象删除工具存在，但默认关闭；只有部署者显式开启、目标命中精确知识库白名单且专用个人Host契约完成真实捕获、关闭浏览器重放和删除后对账时才生成Preview。Preview必须展示完整路径和不可恢复影响；Confirm除diff_digest及confirm_deletions=true外还必须原样提交完整路径confirmation_text。非空知识库还必须在Preview显式allow_nonempty=true。DELETE方法本身不等于资源删除，例如DELETE /lock仅释放临时协作锁。
 目录变更规则：个人私有知识库中的TITLE分组创建、重命名、移动与空分组删除，以及Doc/Sheet目录项在目录树内的移动已完成真实验证；先调用yuque_get_toc取得完整路径和UUID，再调用yuque_preview_change_catalog。删除只允许无任何子节点的空分组，必须展示完整路径并进行删除双确认；不得通过目录工具删除Doc或Sheet整对象。
-评论规则：个人空间普通Doc的评论列表以及当前员工自己评论的创建、修改、删除已完成网页捕获和关浏览器发包验证。先用yuque_list_comments读取完整文档路径和comment_id；写入统一使用yuque_preview_change_comment。删除评论只删除单条评论内容，不删除Doc，但仍必须展示Diff并以confirm_deletions=true二次确认。
+评论规则：个人空间普通Doc的评论列表以及当前用户自己评论的创建、修改、删除已完成网页捕获和关浏览器发包验证。先用yuque_list_comments读取完整文档路径和comment_id；写入统一使用yuque_preview_change_comment。删除评论只删除单条评论内容，不删除Doc，但仍必须展示Diff并以confirm_deletions=true二次确认。
 版本规则：个人空间普通Doc的历史版本列表和指定版本正文读取使用已验证网页接口；先展示原文档完整路径和URL，再展示version_id、版本时间和作者。历史版本恢复必须通过yuque_preview_restore_doc_version；它复用已验证的原生Doc内容写入链路，不调用或猜测专用恢复接口，并继续执行Preview/Confirm、锁、快照、冲突检查和回读。
 原生导出规则：个人或公司空间导出前先调用yuque_get_export_options，展示完整路径、URL和目标类型对应的available_formats并让用户选择；用户已经明确指定格式时可直接调用yuque_create_export_link。普通Doc支持Word、Markdown、PDF、语雀Lake、JPG，LakeSheet支持Excel和语雀LakeSheet，不得给目标类型传入其他格式。服务按语雀官方页面规则轮询异步导出任务，只返回语雀生成的链接，不下载、不缓存导出文件，也不把完整签名链接写入数据库或审计日志。返回browser_login_required=true时，用户必须在自己的浏览器中登录同一语雀账号后打开链接；临时签名链接等同短期访问凭据，不得转发给无关人员。
 当前已真实验证并允许调用的能力：登录状态、绑定用户、个人/公司作用域发现、个人/公司自有知识库、个人受邀知识库及reader/editor角色、私有个人知识库协作者列表与权限变更、目录、全局文档位置、Doc纯文本读取、企业/知识库全文搜索、Markdown转Lake、LakeSheet值/公式/已支持基础格式范围读取、多工作表与空工作簿读取，以及本地退出。个人/组织Host的Doc正文追加/章节替换/章节删除/改标题、个人Host的历史版本读取与经安全Doc链路恢复、Sheet值/公式/基础格式和已验证工作表操作已完成strict阻断与best_effort真实Preview/Confirm、临时锁、写前加密快照、单次写入、超时只读对账、写后回读及Doc/Sheet快照恢复；strict仍不发远程内容写请求。共享知识库完整路径使用“共享：<所有者> / <知识库> / ...”；邀请创建后接收方仍需在语雀确认加入。权限变更默认关闭，只有ALLOW_PERMISSION_CHANGES=true、best_effort和精确知识库白名单同时满足时才能Confirm。个人空间的全局全文搜索尚未验证，必须提供个人 book_url 做知识库范围搜索。Sheet Preview中的公式缓存值由服务自行计算，当前只支持四则运算和SUM/AVERAGE/MIN/MAX/COUNT/COUNTA/IF/AND/OR/NOT/COUNTIF/SUMIF/COUNTIFS/SUMIFS/AVERAGEIF/AVERAGEIFS/COUNTBLANK/LARGE/SMALL/STDEVP/VARP/STDEVS/VARS/ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISEVEN/ISODD/ABS/ROUND/CEILING/FLOOR/SUMPRODUCT/CHOOSE/RANK/SIGN/PI/EXP/LN/LOG/LOG10/TRUNC/MROUND/QUOTIENT/SIN/COS/TAN/DEGREES/RADIANS/FACT/GCD/LCM/COMBIN/SUMSQ/CONCAT/CONCATENATE/LEFT/RIGHT/MID/LEN/LOWER/UPPER/TRIM/FIND/SEARCH/SUBSTITUTE/REPLACE/REPT/EXACT/ROUNDUP/ROUNDDOWN/INT/MOD/SQRT/POWER/PRODUCT/MEDIAN/VLOOKUP/HLOOKUP/MATCH/INDEX；其中STDEVP/VARP只接受至少1个数值的单一范围，STDEVS/VARS只接受至少2个数值的单一范围，非数值格忽略；VLOOKUP/HLOOKUP/MATCH只允许已验证的精确匹配模式，RANK只允许降序模式0，CEILING/FLOOR只允许非负值和正步长，SUMPRODUCT只允许两个等维纯数值范围，CHOOSE只允许标量候选，LOG和TRUNC只允许已验证的两参数形式，MROUND只允许非负数和正倍数，LN/LOG10拒绝非正数，QUOTIENT拒绝零除数，FACT与COMBIN只接受0至170的安全整数范围，GCD/LCM只接受非负安全整数且LCM拒绝超出安全整数的结果，SUMSQ只接受标量参数，FIND/SEARCH只允许带明确起始位置的三参数形式，SUBSTITUTE只允许三参数全量替换，SUBSTITUTE/REPLACE/REPT结果最多10,000字符，多条件函数要求范围维度一致且拒绝通配符。调用方提交的formula.value会被忽略，普通单元格变化会重算同表既有公式并进入Diff，未知函数和循环引用会拒绝。固定包不支持MAXIFS/MINIFS，NOW/TODAY/RAND等易变函数也保持关闭，不能猜测开放。个人测试表已验证column/stackColumn/bar/stackBar/line/smoothLine/pie/ring八类图表的类型字段写入、回读与完整恢复；其中column还验证了6套主题、6套布局以及边框、隐藏/空数据展示、网格线、Y轴格式化及前后缀、标题/轴标题、图例、数据标签、X轴标签与旋转、Y轴上下限等21个显示配置路径。个人Host现在允许通过yuque_preview_update_sheet生成严格白名单图表Diff：create_column_chart仅限无其他内容或vessel的单工作表A1:B3六个简单单元格结构，set_chart_type支持八类已验证类型，update_column_chart_display仅限column及已验证字段，delete_chart仅限完成网页捕获、关闭浏览器重放和精确恢复的同形态单柱状图；删除Preview必须展示图表类型、来源范围和工作表并要求confirm_deletions=true。所有图表Preview只本地编解码且可取消，不发送远程写请求。原始vessels/chartConfigs永不接受或输出，图表Confirm仍关闭。Lake转Markdown和图表Confirm继续安全失败关闭；禁止猜测接口或绕过门禁。
 推荐读取流程：先调用 yuque_auth_status；未登录时依次调用 yuque_login_begin 和 yuque_login_status。然后调用 yuque_list_scopes 并选择显式 scope_id。查找文档优先调用 yuque_list_all_docs，使用 query 按标题、知识库、完整目录路径或 URL 过滤，并用 offset/limit 分页；只在明确需要单个知识库目录时调用 yuque_get_toc 或 yuque_list_docs。定位目标后，把返回的完整 url 作为 doc_url 调用 yuque_get_doc。
 yuque_list_all_docs 只返回位置索引，不返回正文；不要试图一次读取所有文档正文。其索引缓存五分钟，只有必须获取最新目录时才设置 force_refresh=true。yuque_get_doc 返回 plain_text 正文以及 version、updated_at、fingerprint 等元数据。
-“全部文档”仅指当前员工语雀权限范围内的可见文档，服务不会也不能绕过语雀权限。当前实例支持多名员工；每名员工使用独立的 Bearer Token 和语雀登录态，数据互不共享。
-所有写入必须preview后使用统一yuque_confirm_change；confirm必须回传diff_digest。若工具返回登录过期或relogin_required，仅让当前员工重新执行自己的扫码登录；若返回契约不匹配、结果unknown或endpoint未验证，不要重试写入或改用猜测请求。`;
+“全部文档”仅指当前用户语雀权限范围内的可见文档，服务不会也不能绕过语雀权限。当前实例支持多名用户（单实例多租户）；每名用户使用独立的 Bearer Token 和语雀登录态，数据按 sha256(ownerId) 分文件隔离，互不共享。
+所有写入必须preview后使用统一yuque_confirm_change；confirm必须回传diff_digest。若工具返回登录过期或relogin_required，仅让当前用户重新执行自己的扫码登录；若返回契约不匹配、结果unknown或endpoint未验证，不要重试写入或改用猜测请求。`;
 
 const emptySchema: JsonSchema = {
   type: "object",
@@ -119,13 +119,13 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_auth_status",
     description:
-      "检查当前员工独立的语雀登录态。任何文档操作前优先调用；connected=false 或 relogin_required=true 时启动扫码登录。",
+      "检查当前用户独立的语雀登录态。任何文档操作前优先调用；connected=false 或 relogin_required=true 时启动扫码登录。",
     inputSchema: emptySchema,
   },
   {
     name: "yuque_login_begin",
     description:
-      "为当前员工启动隔离的一次性扫码登录，返回 login_id、临时登录页和官方扫码页面截图。provider支持dingtalk、wechat、alipay，默认dingtalk。之后用 yuque_login_status 轮询。短信验证码登录请使用 yuque_login_begin_sms（需部署者启用）。",
+      "为当前用户启动隔离的一次性扫码登录，返回 login_id、临时登录页和官方扫码页面截图。provider支持dingtalk、wechat、alipay，默认dingtalk。之后用 yuque_login_status 轮询。短信验证码登录请使用 yuque_login_begin_sms（需部署者启用）。",
     inputSchema: {
       type: "object",
       properties: {
@@ -142,7 +142,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_login_status",
     description:
-      "查询当前员工的一次扫码登录流程。成功后浏览器会关闭，后续文档请求使用加密保存的独立网页会话。",
+      "查询当前用户的一次扫码登录流程。成功后浏览器会关闭，后续文档请求使用加密保存的独立网页会话。",
     inputSchema: {
       type: "object",
       properties: {
@@ -155,7 +155,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_login_begin_sms",
     description:
-      "为当前员工发送短信验证码以登录语雀，服务自动处理滑块验证码。需要部署者启用 SMS_CAPTCHA_ENABLED=true 并配置 Python + DrissionPage + Chrome。返回 login_id，之后调用 yuque_login_submit_sms 提交验证码。",
+      "为当前用户发送短信验证码以登录语雀，服务自动处理滑块验证码。需要部署者启用 SMS_CAPTCHA_ENABLED=true 并配置 Python + DrissionPage + Chrome。返回 login_id，之后调用 yuque_login_submit_sms 提交验证码。",
     inputSchema: {
       type: "object",
       properties: {
@@ -182,25 +182,25 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_logout",
     description:
-      "安全清除且仅清除当前员工在本MCP中的加密Cookie Jar和文档索引缓存；不调用未验证的远端退出接口。",
+      "安全清除且仅清除当前用户在本MCP中的加密Cookie Jar和文档索引缓存；不调用未验证的远端退出接口。",
     inputSchema: emptySchema,
   },
   {
     name: "yuque_get_user",
     description:
-      "返回扫码登录时已验证并加密绑定的当前员工语雀账号摘要；不调用已知404的猜测接口。",
+      "返回扫码登录时已验证并加密绑定的当前用户语雀账号摘要；不调用已知404的猜测接口。",
     inputSchema: emptySchema,
   },
   {
     name: "yuque_list_scopes",
     description:
-      "发现当前员工可读取的个人与公司空间，返回稳定scope_id、完整路径前缀和Host。只读，不修改语雀网页的全局当前空间。之后把scope_id显式传给知识库、全部文档或搜索工具。",
+      "发现当前用户可读取的个人与公司空间，返回稳定scope_id、完整路径前缀和Host。只读，不修改语雀网页的全局当前空间。之后把scope_id显式传给知识库、全部文档或搜索工具。",
     inputSchema: emptySchema,
   },
   {
     name: "yuque_list_books",
     description:
-      "按显式scope_id列出当前员工可见的个人或公司知识库。向用户展示时必须先输出“完整路径：<个人/空间前缀 / 知识库名>”及URL。服务内部分页拉全后本地过滤 keyword；不是正文搜索。",
+      "按显式scope_id列出当前用户可见的个人或公司知识库。向用户展示时必须先输出“完整路径：<个人/空间前缀 / 知识库名>”及URL。服务内部分页拉全后本地过滤 keyword；不是正文搜索。",
     inputSchema: {
       type: "object",
       properties: {
@@ -539,7 +539,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_change_comment",
     description:
-      "预览个人空间普通Doc评论的create、update或delete。update/delete必须提交yuque_list_comments返回的comment_id，且首版只允许修改或删除当前员工自己的评论；delete必须在Confirm时额外提交confirm_deletions=true。",
+      "预览个人空间普通Doc评论的create、update或delete。update/delete必须提交yuque_list_comments返回的comment_id，且首版只允许修改或删除当前用户自己的评论；delete必须在Confirm时额外提交confirm_deletions=true。",
     inputSchema: {
       type: "object",
       properties: {
@@ -731,7 +731,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_confirm_change",
     description:
-      "执行同一员工10分钟内的一次性preview。必须原样回传diff_digest；包含删除时先向用户展示Diff并明确确认，再设置confirm_deletions=true。结果unknown时严禁重试。",
+      "执行同一用户10分钟内的一次性preview。必须原样回传diff_digest；包含删除时先向用户展示Diff并明确确认，再设置confirm_deletions=true。结果unknown时严禁重试。",
     inputSchema: {
       type: "object",
       properties: {
@@ -752,13 +752,13 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_cancel_change",
     description:
-      "取消当前员工的待确认 change_token；只影响本服务的临时变更，不修改语雀文档。",
+      "取消当前用户的待确认 change_token；只影响本服务的临时变更，不修改语雀文档。",
     inputSchema: changeTokenSchema(),
   },
   {
     name: "yuque_list_snapshots",
     description:
-      "列出当前员工最近7天的加密写前快照元数据，不返回快照正文。可用target_url筛选，不能访问其他员工快照。",
+      "列出当前用户最近7天的加密写前快照元数据，不返回快照正文。可用target_url筛选，不能访问其他用户快照。",
     inputSchema: {
       type: "object",
       properties: {
@@ -770,7 +770,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_restore_snapshot",
     description:
-      "将当前员工的Doc或Sheet加密写前快照与服务器当前版本生成恢复Diff，不直接写入；恢复仍使用yuque_confirm_change并遵守删除确认、锁和版本冲突保护。",
+      "将当前用户的Doc或Sheet加密写前快照与服务器当前版本生成恢复Diff，不直接写入；恢复仍使用yuque_confirm_change并遵守删除确认、锁和版本冲突保护。",
     inputSchema: {
       type: "object",
       properties: {

@@ -265,7 +265,7 @@ describe("personal Doc comment client", () => {
         action: "delete",
         commentId: "11",
       }),
-    ).rejects.toThrow("current employee's own comments");
+    ).rejects.toThrow("current user's own comments");
 
     const create = await client.prepareCommentChange("employee.a", {
       docUrl,

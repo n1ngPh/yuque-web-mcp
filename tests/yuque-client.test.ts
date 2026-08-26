@@ -191,7 +191,7 @@ describe("Yuque HTTP replay client", () => {
     expect(personalBookRequests).toBe(1);
   });
 
-  it("sends employee cookies and web headers without a browser process", async () => {
+  it("sends user cookies and web headers without a browser process", async () => {
     let observed: Record<string, string | undefined> = {};
     const server = createServer((request, response) => {
       observed = {
@@ -243,7 +243,7 @@ describe("Yuque HTTP replay client", () => {
       "employee.a",
     );
     const jar = new CookieJar();
-    await jar.setCookie("yuque_session=employee-a; Path=/", origin);
+    await jar.setCookie("yuque_session=user-a; Path=/", origin);
     await sessions.save("employee.a", {
       cookies: jar.serializeSync(),
       csrfToken: "csrf-a",
@@ -261,7 +261,7 @@ describe("Yuque HTTP replay client", () => {
       login: "alice",
     });
     expect(observed).toEqual({
-      cookie: "yuque_session=employee-a",
+      cookie: "yuque_session=user-a",
       csrf: "csrf-a",
       login: "alice",
     });

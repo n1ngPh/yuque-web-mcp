@@ -10,7 +10,7 @@
 
 ## Boundaries
 
-1. An employee's MCP client authenticates to one isolated instance.
+1. An user's MCP client authenticates to one isolated instance.
 2. The instance decrypts one local Yuque session and calls an allow-listed Yuque host.
 3. Temporary Chromium is used only for official QR login, runs with its system sandbox inside the constrained container, then closes.
 4. SQLite and encrypted files live in the instance data directory.
@@ -20,7 +20,7 @@
 
 | Threat | Controls |
 | --- | --- |
-| Cross-employee session access | One owner per process; independent bearer, key, database, data directory, port, and Compose project |
+| Cross-user session access | One owner per process; independent bearer, key, database, data directory, port, and Compose project |
 | Token theft in transit | HTTPS requirement for non-loopback public URLs; explicit insecure override only |
 | Host or Origin confusion | Exact Host allowlist, Origin allowlist, fixed Yuque hosts, no arbitrary URL tool |
 | Credential leakage | Encrypted session, private file modes, redacted JSON logs, protected metrics, public-content scanner |

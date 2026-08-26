@@ -97,11 +97,11 @@ function assertNoOptions(options: Map<string, string>): void {
 function usage(): string {
   return [
     "Usage:",
-    "  instance-admin create <employee-alias> --port <port> [--public-base-url <url>] [--image <fixed-image>] [--bind-address <address>] [--root <absolute-path>]",
-    "  instance-admin start <employee-alias> [--root <absolute-path>]",
-    "  instance-admin status <employee-alias> [--root <absolute-path>]",
-    "  instance-admin backup <employee-alias> [--root <absolute-path>]",
-    "  instance-admin upgrade <employee-alias> --image <fixed-image> [--root <absolute-path>]",
+    "  instance-admin create <user-alias> --port <port> [--public-base-url <url>] [--image <fixed-image>] [--bind-address <address>] [--root <absolute-path>]",
+    "  instance-admin start <user-alias> [--root <absolute-path>]",
+    "  instance-admin status <user-alias> [--root <absolute-path>]",
+    "  instance-admin backup <user-alias> [--root <absolute-path>]",
+    "  instance-admin upgrade <user-alias> --image <fixed-image> [--root <absolute-path>]",
   ].join("\n");
 }
 

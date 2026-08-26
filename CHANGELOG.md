@@ -26,7 +26,7 @@ All notable changes are documented here. The project follows Semantic Versioning
 - Harden Yuque Host and exact write-allowlist validation, reject implicit `latest` images and unsafe instance HTTP URLs, and align each non-root container UID/GID with its private bind-mounted data directory.
 - Add an optional read-only Soak diagnostic with cycle-density and maximum-gap evidence, pin the Node base image by digest, run a real non-root container/data-volume smoke test in CI, and scan release images before publication.
 - Explicitly enable Playwright's `chromiumSandbox` option and verify a real login browser under the shipped seccomp profile; merely omitting sandbox-disabling flags from application arguments is not treated as evidence.
-- Promote the 36-tool release candidate after 446 real Doc/Sheet read cycles with zero failures; long-running session expiry is recovered through the existing per-employee relogin flow rather than treated as a release blocker.
+- Promote the 36-tool release candidate after 446 real Doc/Sheet read cycles with zero failures; long-running session expiry is recovered through the existing per-user relogin flow rather than treated as a release blocker.
 
 ## 1.0.0-rc.1
 
@@ -34,7 +34,7 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## 0.6.0
 
-- Introduce one-employee-per-instance Docker Compose management.
+- Introduce one-user-per-instance Docker Compose management.
 
 ## 0.5.0
 

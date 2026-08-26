@@ -27,11 +27,11 @@
 | 私有知识库 reader/editor 协作者管理                             | 已验证；默认关闭，需精确白名单及`best_effort`确认            |
 | Doc、Sheet 和知识库整对象删除                                   | 个人Host已验证；默认关闭，需显式开关、精确白名单和二次确认   |
 
-服务目前注册40个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
+服务目前注册41个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
 
 ## 数据安全
 
-- 推荐一名用户运行一个独立实例；不要共享数据目录、Bearer Token 或加密密钥。
+- 同一实例可安全服务多名用户：数据按 `sha256(ownerId)` 分文件隔离，每个用户拥有独立的 SQLite 数据库、加密登录态和租户上下文。也可为每名用户部署独立实例。不要跨用户共享 Bearer Token 或加密密钥。
 - Cookie、CSRF 和账号绑定使用 AES-256-GCM 加密后写入本地数据目录。
 - 内置 SQLite 只保存当前实例的待确认变更、加密快照和脱敏审计摘要，不需要 PostgreSQL、MySQL 等外部数据库。
 - `MCP_BEARER_TOKEN` 和 `SESSION_ENCRYPTION_KEY` 只保存在本地私密环境文件中，不应提交到 Git、截图或通过聊天发送。
@@ -126,7 +126,7 @@ npm run local:start
 - 目录变更：`yuque_preview_change_catalog`；`TITLE`分组支持创建/重命名/移动/空分组删除，Doc/Sheet目录项支持移动
 - 文档与表格：`yuque_get_doc`、`yuque_get_sheet`
 - 文档导出：先用`yuque_get_export_options`识别目标类型并让用户选择格式，再调用`yuque_create_export_link`；普通Doc支持`word`、`markdown`、`pdf`、`lake`、`jpg`，LakeSheet支持`excel`、`lakesheet`，只返回语雀下载链接
-- 评论：`yuque_list_comments`、`yuque_preview_change_comment`；修改/删除首版仅限当前员工自己的评论
+- 评论：`yuque_list_comments`、`yuque_preview_change_comment`；修改/删除首版仅限当前用户自己的评论
 - 变更流程：各类 `yuque_preview_*`、`yuque_confirm_change`、`yuque_cancel_change`
 - 快照：`yuque_list_snapshots`、`yuque_preview_restore_snapshot`
 
@@ -157,30 +157,72 @@ docker compose up -d
 
 服务支持`YUQUE_MCP_ENV_FILE`、`MCP_BEARER_TOKEN_FILE`与`SESSION_ENCRYPTION_KEY_FILE`，便于使用宿主机私密文件或Docker secrets。外网需要代理时配置`YUQUE_HTTPS_PROXY`；私有CA使用`YUQUE_CA_FILE`。服务明确拒绝`NODE_TLS_REJECT_UNAUTHORIZED=0`，并要求语雀Host为无凭据、无路径的HTTPS Origin；精确写入白名单不得越出已配置的个人或团队语雀Host。
 
-## 一名员工一个实例
+## 部署架构
 
-`v0.6`提供单机多实例管理命令。员工别名只用于本机查找，索引中仅保存不可逆摘要；实际目录名、Compose项目名、Owner ID、Bearer Token、AES密钥、端口和数据目录彼此独立。
+支持两种部署模式，可根据团队规模和运维偏好选择。
+
+### 方案一：单实例多租户（推荐）
+
+一个 Node 进程服务所有用户，数据按 `ownerId` 自动隔离。这是当前核心架构，适合团队统一部署。
+
+```
+                   ┌─────────────────────────────────────────────┐
+                   │  一个 Node 进程（单一端口）                    │
+                   │                                              │
+                   │  tenants: Map<ownerId, TenantContext>        │
+                   │   ├─ owner A → { db, client, changes }      │
+                   │   ├─ owner B → { db, client, changes }      │
+                   │   └─ owner C → { db, client, changes }      │
+                   └─────────────────────────────────────────────┘
+                        │            │            │
+                   磁盘隔离（按 sha256(ownerId) 分文件）：
+                   data/db/9cc4f6c1....db        ← owner A 的 SQLite
+                   data/db/f1dbc142....db        ← owner B 的 SQLite
+                   data/sessions/9cc4f6c1....enc ← owner A 的语雀登录态
+                   data/sessions/f1dbc142....enc ← owner B 的语雀登录态
+```
+
+**三层隔离：**
+
+1. **进程层** — 一个 `index.js` 进程服务所有用户。
+2. **租户上下文层** — `src/app.ts` 中 `tenants` Map 懒加载，每个 `ownerId` 拥有独立的 `AppDatabase`、`YuqueWebClient`、`ChangeStore` 和串行队列。
+3. **磁盘数据层** — `databasePathFor(dataDir, ownerId)` 按 `sha256(ownerId)` 分文件，数据库和登录态彼此隔离。
+
+**配置方式：** 通过 `MCP_USERS_FILE` 指定用户清单文件，或直接使用 `MCP_OWNER_ID` + `MCP_BEARER_TOKEN` 环境变量（单用户兼容模式）。详见 [deploy/users.json.example](deploy/users.json.example)。
+
+```json
+{
+  "users": [
+    { "ownerId": "alice", "bearerToken": "tok_alice_...", "agentId": "agent-alice" },
+    { "ownerId": "bob",   "bearerToken": "tok_bob_...",   "agentId": "agent-bob"   }
+  ]
+}
+```
+
+### 方案二：每用户一个实例
+
+`v0.6` 提供单机多实例管理命令，适合需要更强物理隔离或独立升级的场景。用户别名只用于本机查找，索引中仅保存不可逆摘要；实际目录名、Compose 项目名、Owner ID、Bearer Token、AES 密钥、端口和数据目录彼此独立。
 
 ```bash
 npm run build
 
-# 根目录必须是绝对路径，镜像必须使用固定版本或digest，禁止latest
+# 根目录必须是绝对路径，镜像必须使用固定版本或 digest，禁止 latest
 export YUQUE_MCP_INSTANCES_ROOT=/srv/yuque-web-mcp
-npm run create-instance -- employee-a --port 18101 \
-  --public-base-url https://employee-a-mcp.example.com \
+npm run create-instance -- user-a --port 18101 \
+  --public-base-url https://user-a-mcp.example.com \
   --image registry.example.com/yuque-web-mcp:1.2.0 \
   --bind-address 127.0.0.1
 
-npm run start-instance -- employee-a
-npm run status-instance -- employee-a
-npm run backup-instance -- employee-a
-npm run upgrade-instance -- employee-a \
+npm run start-instance -- user-a
+npm run status-instance -- user-a
+npm run backup-instance -- user-a
+npm run upgrade-instance -- user-a \
   --image registry.example.com/yuque-web-mcp:1.2.0
 ```
 
-`create-instance`返回私密`service.env`的位置。它还会生成仅含非敏感运行UID/GID的私有`.env`，让非root容器与宿主机`data/`保持一致的写权限，并把已校验的Chromium seccomp profile复制到实例目录；缺失、默认放行或未明确允许沙箱所需调用的profile会让创建失败关闭。可用`YUQUE_MCP_CHROMIUM_SECCOMP_PROFILE`指定另一份经过等效审计的绝对路径。不要手工修改或跨实例复制实例文件。通过安全的密钥渠道把`service.env`中的MCP Bearer Token交给对应员工，不要复制整个文件。`backup-instance`包含登录会话和密钥，备份目录必须按机密数据管理。升级会先备份；拉取或启动新镜像失败时会恢复旧Compose并尝试启动旧版本。
+`create-instance` 返回私密 `service.env` 的位置。它还会生成仅含非敏感运行 UID/GID 的私有 `.env`，让非 root 容器与宿主机 `data/` 保持一致的写权限，并把已校验的 Chromium seccomp profile 复制到实例目录；缺失、默认放行或未明确允许沙箱所需调用的 profile 会让创建失败关闭。可用 `YUQUE_MCP_CHROMIUM_SECCOMP_PROFILE` 指定另一份经过等效审计的绝对路径。不要手工修改或跨实例复制实例文件。通过安全的密钥渠道把 `service.env` 中的 MCP Bearer Token 交给对应用户，不要复制整个文件。`backup-instance` 包含登录会话和密钥，备份目录必须按机密数据管理。升级会先备份；拉取或启动新镜像失败时会恢复旧 Compose 并尝试启动旧版本。
 
-每个实例建议只绑定`127.0.0.1`，再由Caddy、Nginx或公司现有网关提供HTTPS。最小Nginx片段如下；公网域名、证书和访问控制由部署方提供：
+每个实例建议只绑定 `127.0.0.1`，再由 Caddy、Nginx 或公司现有网关提供 HTTPS。最小 Nginx 片段如下；公网域名、证书和访问控制由部署方提供：
 
 ```nginx
 location / {
@@ -193,7 +235,7 @@ location / {
 }
 ```
 
-Hermes Agent、虾塘或其他MCP客户端均使用同一组标准参数：Transport=`Streamable HTTP`，URL=`https://<员工实例域名>/mcp`，Header=`Authorization: Bearer <该员工Token>`。如果智能体平台不能为不同员工配置不同URL或Header，就不能安全共享这些实例。
+Hermes Agent、虾塘或其他 MCP 客户端均使用同一组标准参数：Transport=`Streamable HTTP`，URL=`https://<用户实例域名>/mcp`，Header=`Authorization: Bearer <该用户 Token>`。如果智能体平台不能为不同用户配置不同 URL 或 Header，就不能安全共享实例。
 
 ## 运维命令
 
@@ -226,7 +268,7 @@ npm run check
 
 普通自动测试使用脱敏 fixture，不访问真实语雀。任何真实写入验证都应在专用测试知识库中人工启用，并在执行前确认目标完整路径、账号和 Host。
 
-部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、40个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应员工重新扫码即可恢复。
+部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、41个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应用户重新扫码即可恢复。
 
 ```bash
 MCP_ENV_FILE=/absolute/private/service.env \

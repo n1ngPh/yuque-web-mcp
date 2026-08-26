@@ -548,7 +548,7 @@ describe("single-owner safe change store", () => {
         location: {
           path: ["test_创建表格"],
           fullPath: ["测试知识库", "test_创建表格"],
-          displayPath: "个人：测试员工 / 测试知识库 / test_创建表格",
+          displayPath: "个人：测试用户 / 测试知识库 / test_创建表格",
           level: 0,
           order: 0,
         },

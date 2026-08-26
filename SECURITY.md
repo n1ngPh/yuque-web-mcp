@@ -10,7 +10,7 @@ Do not open a public issue containing credentials, cookies, private document con
 
 ## Deployment baseline
 
-- Run one instance per employee with independent data, bearer token, encryption key, SQLite file, port, and Compose project.
+- Run one instance per user with independent data, bearer token, encryption key, SQLite file, port, and Compose project.
 - Put remote instances behind HTTPS. Plain HTTP on a non-loopback public URL is rejected unless the deployment owner explicitly sets `ALLOW_INSECURE_HTTP=true`.
 - Keep `WRITE_CONSISTENCY_MODE=strict`, deletion and permission changes disabled, and the write allowlist empty until the deployment owner completes a sandbox review.
 - Use `WRITE_KILL_SWITCH=true` to stop all Confirm operations during an incident or contract regression.

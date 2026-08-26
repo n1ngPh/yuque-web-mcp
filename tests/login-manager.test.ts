@@ -247,7 +247,7 @@ describe("SMS login flow", () => {
     );
   });
 
-  it("caps concurrent login flows across employees", async () => {
+  it("caps concurrent login flows across users", async () => {
     const captcha = smsCaptcha({ sendSmsOk: true });
     const manager = new LoginManager(
       {

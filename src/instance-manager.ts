@@ -101,7 +101,7 @@ export class InstanceManager {
       const index = await this.loadIndex();
       const aliasHash = hashAlias(normalizedAlias);
       if (index.instances.some((entry) => entry.aliasHash === aliasHash)) {
-        throw new Error("An instance already exists for this employee alias");
+        throw new Error("An instance already exists for this user alias");
       }
       if (index.instances.some((entry) => entry.port === port)) {
         throw new Error("The requested instance port is already assigned");

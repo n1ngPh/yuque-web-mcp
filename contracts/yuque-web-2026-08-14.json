@@ -698,7 +698,7 @@
           "deleteRequests": 1,
           "exactMatchOnly": true,
           "constraints": [
-            "current employee's own comment only",
+            "current user's own comment only",
             "Preview and explicit deletion confirmation required",
             "one DELETE request followed by list read-back"
           ]

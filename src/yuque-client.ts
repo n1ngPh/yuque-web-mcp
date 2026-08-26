@@ -1608,7 +1608,7 @@ export class YuqueWebClient {
     const current = matches[0]!;
     if (current.authorLogin !== session.account.login) {
       throw new ContractError(
-        "v0.4 comment update/delete is restricted to the current employee's own comments",
+        "v0.4 comment update/delete is restricted to the current user's own comments",
       );
     }
     if (input.action === "delete") {
@@ -2035,7 +2035,7 @@ export class YuqueWebClient {
     books: NormalizedBook[],
   ): Promise<LocatedDocument[]> {
     // 受限并发拉取每个知识库的目录，避免串行 20 个 get_toc 耗时过长。
-    // 走 requestUnlocked 绕过 per-employee 串行队列，并 skipPersist 跳过
+    // 走 requestUnlocked 绕过 per-user 串行队列，并 skipPersist 跳过
     // 写回 session（纯读请求不改变 Cookie/CSRF，且并发写 .tmp 会竞争）。
     const concurrency = 5;
     const collected: LocatedDocument[] = [];
@@ -3748,7 +3748,7 @@ export class YuqueWebClient {
         candidate.slug === locator.bookSlug,
     );
     if (!book)
-      throw new Error("Knowledge base is not visible to this employee");
+      throw new Error("Knowledge base is not visible to this user");
     return book;
   }
 

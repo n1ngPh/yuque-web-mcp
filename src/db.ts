@@ -40,7 +40,7 @@ export interface AuditEventRow {
 
 /**
  * Embedded, single-owner state store. It never contains MCP credentials,
- * Yuque cookies, CSRF values, employee directories, or plaintext audit bodies.
+ * Yuque cookies, CSRF values, user directories, or plaintext audit bodies.
  */
 export class AppDatabase {
   private readonly db: Database.Database;
