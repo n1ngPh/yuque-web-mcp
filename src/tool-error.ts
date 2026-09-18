@@ -1,5 +1,9 @@
 import { ContractError } from "./contracts.js";
-import { ReloginRequiredError, YuqueHttpError } from "./yuque-client.js";
+import {
+  ReloginRequiredError,
+  UnsupportedResourceError,
+  YuqueHttpError,
+} from "./yuque-client.js";
 
 export interface SafeToolError {
   ok: false;
@@ -20,6 +24,15 @@ export function toSafeToolError(
   const message = safeMessage(error);
   if (error instanceof ReloginRequiredError) {
     return failure("relogin_required", message, requestId, false, true);
+  }
+  if (error instanceof UnsupportedResourceError) {
+    return failure(
+      "unsupported_resource_type",
+      message,
+      requestId,
+      false,
+      false,
+    );
   }
   if (error instanceof ContractError) {
     return failure("contract_incompatible", message, requestId, false, false);

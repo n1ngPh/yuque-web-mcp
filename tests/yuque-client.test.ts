@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -10,7 +10,11 @@ import { CookieJar } from "tough-cookie";
 import { ContractRegistry } from "../src/contracts.js";
 import { CryptoBox } from "../src/crypto.js";
 import { SessionStore } from "../src/session-store.js";
-import { classifyYuqueHostType, YuqueWebClient } from "../src/yuque-client.js";
+import {
+  classifyYuqueHostType,
+  UnsupportedResourceError,
+  YuqueWebClient,
+} from "../src/yuque-client.js";
 import type { AppConfig } from "../src/config.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -19,6 +23,77 @@ afterEach(async () => {
 });
 
 describe("Yuque HTTP replay client", () => {
+  it.each([
+    "getDoc",
+    "getSheet",
+    "getExportOptions",
+    "createExportLink",
+  ] as const)(
+    "%s distinguishes unsupported Table records from document text and LakeSheet",
+    async (operation) => {
+      const host = "https://company.yuque.com";
+      const bookUrl = `${host}/team/book`;
+      const contractPath = "contracts/yuque-web-2026-08-14.json";
+      const config = testConfig("/unused", contractPath, host);
+      const client = new YuqueWebClient(
+        config,
+        await ContractRegistry.load(contractPath),
+        new SessionStore("/unused", new CryptoBox(randomBytes(32))),
+      );
+      cleanups.push(() => client.close());
+      vi.spyOn(client, "listAllBooks").mockResolvedValue([
+        {
+          id: 11,
+          name: "Book",
+          description: "",
+          slug: "book",
+          groupLogin: "team",
+          url: bookUrl,
+          itemsCount: 1,
+          scopeId: "organization",
+          scopeType: "organization",
+          scopeName: "Company",
+          scopeLabel: "空间：Company",
+          host,
+          ownerType: "Group",
+          ownerLogin: "team",
+          accessType: "owner",
+          private: true,
+        },
+      ]);
+      const request = vi
+        .spyOn(client, "request")
+        .mockImplementation(async (_owner, capability) => {
+          if (capability !== "get_doc" && capability !== "get_sheet") {
+            throw new Error(
+              `Unexpected request after Table detection: ${capability}`,
+            );
+          }
+          return {
+            id: 12,
+            type: "Table",
+            title: "Data table",
+            slug: "table-doc",
+            book_id: 11,
+            format: "table",
+            content: JSON.stringify({ views: [{ data: [] }] }),
+            draft_version: 1,
+          };
+        });
+      const url = `${bookUrl}/table-doc`;
+      const result =
+        operation === "createExportLink"
+          ? client.createExportLink("employee.a", url, "excel")
+          : client[operation]("employee.a", url);
+      await expect(result).rejects.toBeInstanceOf(UnsupportedResourceError);
+      await expect(result).rejects.toThrow(
+        "does not establish that the table has no records",
+      );
+      // No schema-as-text response, speculative records request or export job.
+      expect(request).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("classifies a standalone same-origin configuration as personal", () => {
     expect(
       classifyYuqueHostType({

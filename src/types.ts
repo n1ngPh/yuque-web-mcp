@@ -53,6 +53,7 @@ export type CapabilityName =
   | "get_doc_version"
   | "restore_doc_version"
   | "get_sheet"
+  | "get_table_records"
   | "convert_markdown"
   | "create_doc"
   | "mount_catalog_node"

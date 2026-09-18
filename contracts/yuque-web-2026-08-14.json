@@ -628,6 +628,17 @@
       "liveWriteEnabled": true
     },
     {
+      "capability": "get_table_records",
+      "verified": true,
+      "observedHostTypes": ["organization"],
+      "verifiedHostTypes": ["organization"],
+      "method": "GET",
+      "path": "/api/modules/table/doc/TableRecordController/show",
+      "idempotent": true,
+      "requiredResponsePaths": ["records", "hasMore", "users"],
+      "notes": "Organization Table/laketable browser HTTP capture on 2026-09-18. Query: docId, docType=Doc, sheetId, limit, offset. Rows are JSON-encoded data keyed by column ids; views.data is not the record source. View filters and row-description getContent are not applied. Personal Host and native Table export remain unverified."
+    },
+    {
       "capability": "get_sheet",
       "verified": true,
       "verifiedHostTypes": ["organization", "personal"],

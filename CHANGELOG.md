@@ -4,6 +4,8 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## Unreleased
 
+- Add read-only organization Table/laketable records through `yuque_get_table`, including pagination and option/user display values. Existing `yuque_get_doc` calls automatically route Table resources to record reading instead of presenting schema as document text. Web view filters and row descriptions are not applied; native Table export remains unsupported.
+
 - Enable organization-host live write for Doc content edit (append/replace_section/delete_section/rename) and Doc creation, gated by Yuque account permissions via the new `YUQUE_WRITE_ORGANIZATION_OPEN` flag. Organization Host writes skip the exact per-book allowlist and rely on the Yuque account's own permissions; personal Host writes still require the exact allowlist. Also enables organization Host for the doc lock (`get_doc_lock`/`acquire_doc_lock`/`release_doc_lock`) and editor readback (`get_doc_editor`) contracts that the write-confirm path depends on.
 
 ## 1.2.0 - 2026-08-18

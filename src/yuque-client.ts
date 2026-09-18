@@ -22,6 +22,7 @@ import {
 } from "./sheet-model.js";
 import { PinnedLakeHtmlRenderer, type LakeHtmlRenderer } from "./lake-html.js";
 import { lakeText } from "./lake-document.js";
+import { parseTableSchema, parseTableRecords } from "./table-model.js";
 import { createYuqueDispatcher } from "./network-policy.js";
 import type { Dispatcher } from "undici";
 
@@ -29,6 +30,24 @@ export class ReloginRequiredError extends Error {
   constructor() {
     super("Yuque login has expired; scan the login QR code again");
     this.name = "ReloginRequiredError";
+  }
+}
+
+export class UnsupportedResourceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedResourceError";
+  }
+}
+
+function assertNotDataTable(detail: Record<string, unknown>): void {
+  if (detail.type === "Table") {
+    throw new UnsupportedResourceError(
+      "Target is a Yuque Table (data table), not a Doc or Sheet/lakesheet. " +
+        "Use yuque_get_table to read records; native Table export is not implemented. Document text " +
+        "may contain only the schema; an empty views.data does not establish " +
+        "that the table has no records. Open the original Yuque page to read it.",
+    );
   }
 }
 
@@ -2141,6 +2160,7 @@ export class YuqueWebClient {
       },
       baseHost: book.host,
     });
+    assertNotDataTable(asRecord(detail, "Document detail"));
     const text = await this.request(employeeId, "get_doc_text", {
       pathParams: {
         groupSlug: locator.groupSlug,
@@ -2287,6 +2307,7 @@ export class YuqueWebClient {
     const id = String(requireNumber(detail, "id"));
     const title = requireStringValue(detail, "title");
     const slug = requireStringValue(detail, "slug");
+    assertNotDataTable(detail);
     const rawType = detail.type;
     if (
       (rawType !== "Doc" && rawType !== "Sheet") ||
@@ -2518,6 +2539,7 @@ export class YuqueWebClient {
       }),
       "LakeSheet detail",
     );
+    assertNotDataTable(detail);
     if (detail.format !== "lakesheet" || detail.type !== "Sheet") {
       throw new ContractError("Target is not an independent Sheet/lakesheet");
     }
@@ -2558,6 +2580,117 @@ export class YuqueWebClient {
       bodyDraft,
       unsupportedFeatures: decoded.unsupportedFeatures,
       chartSummaries: decoded.chartSummaries,
+    };
+  }
+
+  async getTable(
+    employeeId: string,
+    docUrl: string,
+    input: { sheetId?: string; offset?: number; limit?: number } = {},
+  ): Promise<Record<string, unknown>> {
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? 100;
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 5000
+    ) {
+      throw new Error(
+        "Table offset must be non-negative and limit must be between 1 and 5000",
+      );
+    }
+    const locator = parseYuqueUrl(docUrl, this.allowedYuqueHosts());
+    if (!locator.docSlug)
+      throw new Error("doc_url must include a document slug");
+    const book = await this.resolveBook(employeeId, docUrl);
+    const detail = asRecord(
+      await this.request(employeeId, "get_doc", {
+        pathParams: { docSlug: locator.docSlug },
+        query: {
+          book_id: book.id,
+          mode: "edit",
+          include_contributors: true,
+          include_like: true,
+          include_hits: true,
+          merge_dynamic_data: false,
+        },
+        baseHost: book.host,
+        referer: docUrl,
+      }),
+      "Table detail",
+    );
+    if (detail.type !== "Table" || detail.format !== "laketable") {
+      throw new UnsupportedResourceError(
+        "Target is not a Table/laketable; use yuque_get_sheet for Sheet/lakesheet or yuque_get_doc for ordinary documents",
+      );
+    }
+    const id = String(requireNumber(detail, "id"));
+    const slug = requireStringValue(detail, "slug");
+    if (
+      requireNumber(detail, "book_id") !== book.id ||
+      slug !== locator.docSlug
+    ) {
+      throw new ContractError(
+        "Table detail does not match the requested document",
+      );
+    }
+    const nodes = await this.loadCatalog(employeeId, book);
+    const located = catalogDocuments(book, nodes).find(
+      (doc) => String(doc.id) === id && doc.slug === slug,
+    );
+    if (!located)
+      throw new ContractError(
+        "Table is readable but its full catalog path could not be resolved",
+      );
+    const sheets = parseTableSchema(requireStringValue(detail, "content"));
+    const base = {
+      response_rule:
+        "先向用户输出 display_path 和 url。记录按底层数据分页，未应用网页视图筛选、排序或分组；不能将当前页或空视图误报为整表。继续读取使用 yuque_get_table 和 next_offset。",
+      display_path: located.position.displayPath,
+      full_path: located.position.fullPath,
+      url: located.url,
+      id,
+      title: requireStringValue(detail, "title"),
+      book_id: book.id,
+      book_url: book.url,
+      source_type: "Table",
+      source_format: "laketable",
+      output_format: "table_records",
+      schema_version: requireNumber(detail, "draft_version"),
+      view_filters_applied: false,
+      record_descriptions_included: false,
+      sheets: sheets.map((sheet) => ({
+        id: sheet.id,
+        columns: sheet.columns,
+        views: sheet.views,
+      })),
+    };
+    if (!input.sheetId && sheets.length > 1)
+      return { ...base, selection_required: true };
+    const sheet = input.sheetId
+      ? sheets.find((sheet) => sheet.id === input.sheetId)
+      : sheets[0];
+    if (!sheet) throw new Error("sheet_id was not found in the Table schema");
+    const response = await this.request(employeeId, "get_table_records", {
+      query: { docId: id, docType: "Doc", sheetId: sheet.id, offset, limit },
+      baseHost: book.host,
+      referer: located.url,
+      returnEnvelope: true,
+    });
+    const page = parseTableRecords(response, sheet, id, limit);
+    return {
+      ...base,
+      sheet_id: sheet.id,
+      columns: sheet.columns,
+      records: page.records,
+      offset,
+      limit,
+      returned_count: page.records.length,
+      has_more: page.hasMore,
+      next_offset: page.hasMore ? offset + page.records.length : null,
+      complete: offset === 0 && !page.hasMore,
     };
   }
 

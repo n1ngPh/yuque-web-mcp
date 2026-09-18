@@ -1,9 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { ContractError } from "../src/contracts.js";
 import { toSafeToolError } from "../src/tool-error.js";
-import { ReloginRequiredError, YuqueHttpError } from "../src/yuque-client.js";
+import {
+  ReloginRequiredError,
+  UnsupportedResourceError,
+  YuqueHttpError,
+} from "../src/yuque-client.js";
 
 describe("structured safe MCP tool errors", () => {
+  it("does not suggest relogin or retry for an unsupported resource type", () => {
+    expect(
+      toSafeToolError(
+        new UnsupportedResourceError("Table records are not supported"),
+        "table-request",
+      ).error,
+    ).toMatchObject({
+      code: "unsupported_resource_type",
+      retriable: false,
+      relogin_required: false,
+    });
+  });
+
   it("classifies login, contract, permission and rate-limit errors", () => {
     expect(toSafeToolError(new ReloginRequiredError(), "request-1")).toEqual({
       ok: false,
