@@ -63,8 +63,7 @@ describe("native Table document transfer and export", () => {
   );
 
   it.each([
-    "allowlist",
-    "source-allowlist",
+    "organization-open",
     "strict",
     "kill",
     "path",
@@ -73,9 +72,8 @@ describe("native Table document transfer and export", () => {
   ])("blocks %s before consuming the transfer token", async (gate) => {
     const f = await fixture(),
       p = await f.preview("move");
-    if (gate === "allowlist") f.config.writeBookAllowlist = [];
-    if (gate === "source-allowlist")
-      f.config.writeBookAllowlist = [`${host}/team/target-book`];
+    if (gate === "organization-open")
+      f.config.writeOrganizationOpen = false;
     if (gate === "strict") f.config.writeConsistencyMode = "strict";
     if (gate === "kill") f.config.writeKillSwitch = true;
     await expect(
@@ -91,9 +89,8 @@ describe("native Table document transfer and export", () => {
     expect(f.writes).toHaveLength(0);
   });
 
-  it("allows copying a read-only source when only the destination is allowlisted", async () => {
+  it("allows copying from a source book that is not separately writable", async () => {
     const f = await fixture();
-    f.config.writeBookAllowlist = [`${host}/team/target-book`];
     const p = await f.preview("copy");
     await expect(f.confirm(p)).resolves.toMatchObject({ state: "succeeded" });
     expect(f.tables.has(12)).toBe(true);
@@ -438,7 +435,7 @@ async function fixture() {
     requestTimeoutMs: 1000,
     writeConsistencyMode: "best_effort",
     writeKillSwitch: false,
-    writeBookAllowlist: [`${host}/team/book`, `${host}/team/target-book`],
+    writeOrganizationOpen: true,
     allowUnverifiedContracts: false,
   };
   const client = new YuqueWebClient(

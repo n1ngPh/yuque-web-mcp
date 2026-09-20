@@ -206,7 +206,6 @@ async function createFixture(overrides: Partial<AppConfig> = {}): Promise<{
     writeConsistencyMode: "best_effort",
     allowUnverifiedContracts: false,
     allowObjectDeletion: true,
-    writeBookAllowlist: [BOOK_URL],
     ...overrides,
   };
   const db = new AppDatabase(config.databasePath);

@@ -27,7 +27,6 @@ describe("Capability Registry", () => {
       safeguards: {
         object_deletion_enabled: false,
         permission_changes_enabled: false,
-        exact_write_allowlist_configured: false,
       },
     });
     expect(confirm).toMatchObject({

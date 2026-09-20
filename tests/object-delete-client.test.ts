@@ -433,9 +433,10 @@ function testConfig(
     changeTtlSeconds: 600,
     requestTimeoutMs: 1_000,
     writeConsistencyMode: "best_effort",
+    writeOrganizationOpen: true,
+    writePersonalOpen: true,
     allowUnverifiedContracts: false,
     allowObjectDeletion: true,
     allowPermissionChanges: false,
-    writeBookAllowlist: [bookUrl],
   };
 }

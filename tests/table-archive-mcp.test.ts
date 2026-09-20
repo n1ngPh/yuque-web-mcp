@@ -75,14 +75,15 @@ describe("main MCP Table archive with synthetic HTTP upstream", () => {
     expect(f.unexpected).toEqual([]);
   });
 
-  it.each(["strict", "kill", "allowlist", "digest", "deletion"])(
+  it.each(["strict", "kill", "organization-open", "digest", "deletion"])(
     "keeps a blocked %s confirmation unconsumed",
     async (mode) => {
       const f = await fixture(),
         preview = await f.preview();
       if (mode === "strict") f.config.writeConsistencyMode = "strict";
       if (mode === "kill") f.config.writeKillSwitch = true;
-      if (mode === "allowlist") f.config.writeBookAllowlist = [];
+      if (mode === "organization-open")
+        f.config.writeOrganizationOpen = false;
       await expect(
         f.changes.confirmChange(
           "employee.a",
@@ -367,7 +368,7 @@ async function fixture() {
     requestTimeoutMs: 1000,
     writeConsistencyMode: "best_effort",
     writeKillSwitch: false,
-    writeBookAllowlist: [`${host}/team/book`],
+    writeOrganizationOpen: true,
     allowUnverifiedContracts: false,
   };
   const client = new YuqueWebClient(

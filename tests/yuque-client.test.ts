@@ -1659,6 +1659,8 @@ function testConfig(
     changeTtlSeconds: 600,
     requestTimeoutMs: 5_000,
     writeConsistencyMode: "best_effort",
+    writeOrganizationOpen: true,
+    writePersonalOpen: true,
     allowUnverifiedContracts: false,
   };
 }

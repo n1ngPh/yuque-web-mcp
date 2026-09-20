@@ -132,66 +132,13 @@ describe("production configuration", () => {
     ]);
   });
 
-  it("validates exact knowledge-base allowlist URLs", () => {
-    requiredEnvironment();
-    vi.stubEnv("YUQUE_WRITE_BOOK_ALLOWLIST", "not-a-url");
-    expect(() => loadConfig()).toThrow("absolute URLs");
-
-    vi.stubEnv("YUQUE_WRITE_BOOK_ALLOWLIST", "file:///owner/book");
-    expect(() => loadConfig()).toThrow("configured Yuque Host");
-
-    vi.stubEnv(
-      "YUQUE_WRITE_BOOK_ALLOWLIST",
-      "https://unrelated.example.test/owner/book",
-    );
-    expect(() => loadConfig()).toThrow("configured Yuque Host");
-
-    vi.stubEnv(
-      "YUQUE_WRITE_BOOK_ALLOWLIST",
-      "https://www.yuque.com/owner/book?mode=edit",
-    );
-    expect(() => loadConfig()).toThrow("query or fragment");
-
-    vi.stubEnv(
-      "YUQUE_WRITE_BOOK_ALLOWLIST",
-      "https://user:password@www.yuque.com/owner/book",
-    );
-    expect(() => loadConfig()).toThrow("cannot contain credentials");
-
-    vi.stubEnv(
-      "YUQUE_WRITE_BOOK_ALLOWLIST",
-      "https://www.yuque.com/owner/book/extra",
-    );
-    expect(() => loadConfig()).toThrow("one exact knowledge base");
-
-    vi.stubEnv(
-      "YUQUE_WRITE_BOOK_ALLOWLIST",
-      "https://www.yuque.com/owner/book/, https://www.yuque.com/a%20b/c",
-    );
-    expect(loadConfig().writeBookAllowlist).toEqual([
-      "https://www.yuque.com/owner/book",
-      "https://www.yuque.com/a%20b/c",
-    ]);
-  });
-
-  it("requires safe Yuque origins and scopes writes to those origins", () => {
+  it("requires safe Yuque origins", () => {
     requiredEnvironment();
     vi.stubEnv("YUQUE_HOST", "http://team.example.test");
     expect(() => loadConfig()).toThrow("YUQUE_HOST must be an HTTPS origin");
 
     vi.stubEnv("YUQUE_HOST", "https://team.example.test/path");
     expect(() => loadConfig()).toThrow("without credentials, path");
-
-    vi.stubEnv("YUQUE_HOST", "https://team.example.test");
-    vi.stubEnv("YUQUE_PERSONAL_HOST", "https://www.yuque.com");
-    vi.stubEnv(
-      "YUQUE_WRITE_BOOK_ALLOWLIST",
-      "https://team.example.test/owner/team-book,https://www.yuque.com/owner/personal-book",
-    );
-    expect(loadConfig().writeBookAllowlist).toEqual([
-      "https://team.example.test/owner/team-book",
-      "https://www.yuque.com/owner/personal-book",
-    ]);
   });
 
   it("rejects unsafe public URLs and invalid proxy URLs", () => {

@@ -304,6 +304,5 @@ function testConfig(
     allowUnverifiedContracts: false,
     allowObjectDeletion: false,
     allowPermissionChanges: false,
-    writeBookAllowlist: [bookUrl],
   };
 }

@@ -268,8 +268,9 @@ function testConfig(
     changeTtlSeconds: 600,
     requestTimeoutMs: 100,
     writeConsistencyMode: "best_effort",
+    writeOrganizationOpen: true,
+    writePersonalOpen: true,
     allowUnverifiedContracts: false,
-    writeBookAllowlist: [bookUrl],
   };
 }
 

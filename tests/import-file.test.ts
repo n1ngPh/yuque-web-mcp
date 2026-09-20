@@ -383,7 +383,6 @@ function testConfig(
     requestTimeoutMs: 1_000,
     writeConsistencyMode: "best_effort",
     allowUnverifiedContracts: false,
-    writeBookAllowlist: [bookUrl],
     allowObjectDeletion: true,
     writeOrganizationOpen: options.organization === true,
     writePersonalOpen: true,
