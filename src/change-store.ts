@@ -211,7 +211,7 @@ export class ChangeStore {
         [
           "Archive creates a new record ID and new system timestamps; source system metadata remains in the encrypted operation journal.",
           "Only same-book organization Tables with at most 5000 rows are supported; nonempty row descriptions and unsupported fields are rejected.",
-          "Confirm requires best_effort, an inactive write kill switch, exact book allowlist and confirm_deletions=true. No atomic cross-table CAS is available.",
+          "Confirm requires best_effort, an inactive write kill switch, enabled organization write access and confirm_deletions=true. No atomic cross-table CAS is available.",
           "If execution is partial or unknown, do not create another Preview or retry writes; call yuque_get_table_archive_status with reconcile=true.",
         ],
         { added_lines: 1, removed_lines: 1, has_deletions: true },
@@ -360,7 +360,7 @@ export class ChangeStore {
       },
       diff,
       [
-        "Knowledge-base updates have no verified atomic CAS; strict mode remains Preview-only and best_effort must be enabled with an exact knowledge-base allowlist.",
+        "Knowledge-base updates have no verified atomic CAS; strict mode remains Preview-only and best_effort must be enabled with enabled write access.",
         "Confirm sends only the changed name/description fields and intentionally omits cover upload and unrelated settings.",
       ],
       {
@@ -383,7 +383,7 @@ export class ChangeStore {
     this.assertOwner(ownerId);
     if (this.config.allowPermissionChanges !== true) {
       throw new Error(
-        "Permission changes are disabled by configuration; set ALLOW_PERMISSION_CHANGES=true only for an exact write allowlist",
+        "Permission changes are disabled by configuration; set ALLOW_PERMISSION_CHANGES=true only for enabled write access",
       );
     }
     const prepared = await this.client.prepareBookCollaboratorChange(
@@ -422,7 +422,7 @@ export class ChangeStore {
       },
       diff,
       [
-        "Permission changes have no atomic CAS; strict mode remains Preview-only and best_effort requires an exact knowledge-base allowlist.",
+        "Permission changes have no atomic CAS; strict mode remains Preview-only and best_effort requires enabled write access.",
         prepared.action === "invite"
           ? "The recipient must explicitly join the invitation before shared access appears."
           : prepared.action === "remove"
@@ -453,7 +453,7 @@ export class ChangeStore {
     this.assertOwner(ownerId);
     if (input.action === "delete" && this.config.allowObjectDeletion !== true) {
       throw new Error(
-        "Directory deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with an exact write allowlist",
+        "Directory deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with enabled write access",
       );
     }
     const prepared = await this.client.prepareCatalogChange(ownerId, input);
@@ -496,7 +496,7 @@ export class ChangeStore {
       },
       diff,
       [
-        "Catalog writes have no atomic CAS; strict mode remains Preview-only and best_effort requires an exact personal knowledge-base allowlist.",
+        "Catalog writes have no atomic CAS; strict mode remains Preview-only and best_effort requires enabled personal write access.",
         isDelete
           ? "Only a verified empty directory is deleted. Non-empty directory deletion and document deletion through this tool are blocked."
           : isDirectory
@@ -551,7 +551,7 @@ export class ChangeStore {
       },
       diff,
       [
-        "Comment writes have no atomic CAS; strict mode remains Preview-only and best_effort requires the exact personal knowledge-base allowlist.",
+        "Comment writes have no atomic CAS; strict mode remains Preview-only and best_effort requires enabled personal write access.",
         isDelete
           ? "This removes one own comment, not the containing Doc. The encrypted pending change retains the removed Lake body for audit/recovery assistance."
           : "Confirm re-reads the complete comment collection fingerprint, sends one request and verifies the exact comment ID and Lake body.",
@@ -585,7 +585,7 @@ export class ChangeStore {
     this.assertOwner(ownerId);
     if (this.config.allowObjectDeletion !== true) {
       throw new Error(
-        "Knowledge-base deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with an exact write allowlist",
+        "Knowledge-base deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with enabled write access",
       );
     }
     const prepared = await this.client.prepareBookDeletion(ownerId, input);
@@ -627,7 +627,7 @@ export class ChangeStore {
       [
         "Knowledge-base deletion is irreversible in the verified Yuque UI and removes every object in the catalog.",
         "The local service cannot create a complete recoverable snapshot of an entire knowledge base; no original URL, ID, permissions or version history can be restored after Confirm.",
-        "Confirm requires allow_nonempty=true for a non-empty catalog, confirm_deletions=true, the exact full path, best_effort mode, ALLOW_OBJECT_DELETION=true and the exact personal knowledge-base allowlist.",
+        "Confirm requires allow_nonempty=true for a non-empty catalog, confirm_deletions=true, the exact full path, best_effort mode, ALLOW_OBJECT_DELETION=true and enabled personal write access.",
       ],
       {
         added_lines: 0,
@@ -645,7 +645,7 @@ export class ChangeStore {
     this.assertOwner(ownerId);
     if (this.config.allowObjectDeletion !== true) {
       throw new Error(
-        "Whole-object deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with an exact write allowlist",
+        "Whole-object deletion is disabled by configuration; set ALLOW_OBJECT_DELETION=true only with enabled write access",
       );
     }
     const prepared = await this.client.prepareObjectDeletion(ownerId, {
@@ -709,7 +709,7 @@ export class ChangeStore {
       [
         "Confirm moves the whole object out of the active catalog (trashed); it does not claim a permanent hard delete.",
         "Confirm saves a seven-day AES-256-GCM local snapshot first. Recreating from that snapshot produces a new object and cannot restore the original URL, ID or version history.",
-        "Whole-object deletion has no atomic CAS; strict mode remains Preview-only and best_effort requires ALLOW_OBJECT_DELETION=true plus the exact personal knowledge-base allowlist.",
+        "Whole-object deletion has no atomic CAS; strict mode remains Preview-only and best_effort requires ALLOW_OBJECT_DELETION=true plus enabled personal write access.",
       ],
       {
         added_lines: 0,
@@ -1015,7 +1015,7 @@ export class ChangeStore {
         ...current.unsupportedFeatures.map(
           (feature) => `Preserved unsupported workbook feature: ${feature}`,
         ),
-        "Yuque accepts stale draft_version. Strict mode remains Preview-only; best_effort requires an exact personal knowledge-base allowlist and uses local serialization, verified temporary lock ownership, a second workbook read, encrypted snapshot, a single save attempt, timeout reconciliation and semantic write-back verification.",
+        "Yuque accepts stale draft_version. Strict mode remains Preview-only; best_effort requires enabled personal write access and uses local serialization, verified temporary lock ownership, a second workbook read, encrypted snapshot, a single save attempt, timeout reconciliation and semantic write-back verification.",
       ],
       sheetDiffStats(applied.diff),
     );
@@ -1070,7 +1070,7 @@ export class ChangeStore {
         [
           "Restoring creates a new Sheet version and preserves Yuque history.",
           "The encrypted snapshot contains the complete native LakeSheet draft captured immediately before a confirmed write.",
-          "Any concurrent workbook change after this Preview blocks Confirm; best_effort and an exact personal knowledge-base allowlist are still required.",
+          "Any concurrent workbook change after this Preview blocks Confirm; best_effort and enabled personal write access are still required.",
         ],
       );
     }
@@ -1237,7 +1237,7 @@ export class ChangeStore {
     }
     if (this.config.writeConsistencyMode !== "best_effort") {
       throw new Error(
-        "Remote Confirm is blocked by strict write consistency mode; create a new Preview after the deployment owner explicitly enables best_effort for an exact knowledge-base allowlist",
+        "Remote Confirm is blocked by strict write consistency mode; create a new Preview after the deployment owner explicitly enables best_effort for enabled write access",
       );
     }
     if (

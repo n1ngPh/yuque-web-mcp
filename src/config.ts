@@ -59,7 +59,6 @@ export interface AppConfig {
   allowUnverifiedContracts: boolean;
   allowObjectDeletion?: boolean;
   allowPermissionChanges?: boolean;
-  writeBookAllowlist?: string[];
   writeOrganizationOpen?: boolean;
   writePersonalOpen?: boolean;
   writeKillSwitch?: boolean;
@@ -129,9 +128,6 @@ export function loadConfig(): AppConfig {
     process.env.YUQUE_PERSONAL_HOST?.trim() || "https://www.yuque.com",
     "YUQUE_PERSONAL_HOST",
   );
-  const writeBookAllowlist = splitList(
-    process.env.YUQUE_WRITE_BOOK_ALLOWLIST,
-  ).map((value) => normalizeBookUrl(value, [yuqueHost, personalYuqueHost]));
 
   if (
     host !== "127.0.0.1" &&
@@ -176,7 +172,6 @@ export function loadConfig(): AppConfig {
     allowUnverifiedContracts: process.env.ALLOW_UNVERIFIED_CONTRACTS === "true",
     allowObjectDeletion: strictBoolean("ALLOW_OBJECT_DELETION", false),
     allowPermissionChanges: strictBoolean("ALLOW_PERMISSION_CHANGES", false),
-    writeBookAllowlist,
     writeOrganizationOpen: strictBoolean(
       "YUQUE_WRITE_ORGANIZATION_OPEN",
       false,
@@ -354,42 +349,6 @@ function strictBoolean(name: string, fallback: boolean): boolean {
   if (value === "true") return true;
   if (value === "false") return false;
   throw new Error(`${name} must be true or false`);
-}
-
-function normalizeBookUrl(value: string, allowedHosts: string[]): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error("YUQUE_WRITE_BOOK_ALLOWLIST must contain absolute URLs");
-  }
-  if (!allowedHosts.includes(url.origin)) {
-    throw new Error(
-      "YUQUE_WRITE_BOOK_ALLOWLIST URLs must use a configured Yuque Host",
-    );
-  }
-  if (url.username || url.password || url.search || url.hash) {
-    throw new Error(
-      "YUQUE_WRITE_BOOK_ALLOWLIST URLs cannot contain credentials, a query or fragment",
-    );
-  }
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.length !== 2) {
-    throw new Error(
-      "YUQUE_WRITE_BOOK_ALLOWLIST entries must identify one exact knowledge base",
-    );
-  }
-  let normalizedParts: string[];
-  try {
-    normalizedParts = parts.map((part) =>
-      encodeURIComponent(decodeURIComponent(part)),
-    );
-  } catch {
-    throw new Error(
-      "YUQUE_WRITE_BOOK_ALLOWLIST contains malformed URL encoding",
-    );
-  }
-  return `${url.origin}/${normalizedParts.join("/")}`;
 }
 
 function normalizeYuqueHost(value: string, label: string): string {

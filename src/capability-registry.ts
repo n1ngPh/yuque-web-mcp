@@ -102,8 +102,6 @@ export function buildCapabilityReport(
       write_kill_switch_active: config.writeKillSwitch === true,
       object_deletion_enabled: config.allowObjectDeletion === true,
       permission_changes_enabled: config.allowPermissionChanges === true,
-      exact_write_allowlist_configured:
-        (config.writeBookAllowlist?.length ?? 0) > 0,
     },
     capabilities: CAPABILITY_POLICIES.map((policy): CapabilityStatus => {
       if (

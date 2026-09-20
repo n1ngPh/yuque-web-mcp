@@ -2800,13 +2800,14 @@ export class YuqueWebClient {
       plan.input.action === "copy"
         ? [plan.targetBook]
         : [plan.sourceBook, plan.targetBook];
+    if (this.config.writeOrganizationOpen !== true)
+      throw new ContractError(
+        "Table transfer requires YUQUE_WRITE_ORGANIZATION_OPEN=true on the organization Host",
+      );
     for (const book of books) {
-      if (
-        this.contractHostTypeForTarget(book.url) !== "organization" ||
-        !this.config.writeBookAllowlist?.includes(book.url)
-      )
+      if (this.contractHostTypeForTarget(book.url) !== "organization")
         throw new ContractError(
-          "Table transfer requires an exact write allowlist for every modified book",
+          "Table transfer supports only organization Tables",
         );
     }
     this.contracts.getWritable(
@@ -3113,13 +3114,14 @@ export class YuqueWebClient {
         throw new ContractError(
           "Table archive writes require best_effort and an inactive write kill switch",
         );
+      if (this.config.writeOrganizationOpen !== true)
+        throw new ContractError(
+          "Table archive requires YUQUE_WRITE_ORGANIZATION_OPEN=true on the organization Host",
+        );
       for (const target of [plan.source, plan.target]) {
-        if (
-          this.contractHostTypeForTarget(target.url) !== "organization" ||
-          !this.config.writeBookAllowlist?.includes(target.bookUrl)
-        )
+        if (this.contractHostTypeForTarget(target.url) !== "organization")
           throw new ContractError(
-            "Table archive requires an exact knowledge-base write allowlist on the organization Host",
+            "Table archive supports only organization Tables",
           );
       }
       for (const capability of [
@@ -4612,17 +4614,9 @@ export class YuqueWebClient {
     ) {
       return;
     }
-    if (this.config.writeBookAllowlist === undefined) return;
-    if (!targetUrl) {
-      throw new Error("A full knowledge-base or document URL is required");
-    }
-    const locator = parseYuqueUrl(targetUrl, this.allowedYuqueHosts());
-    const bookUrl = `${locator.origin}/${encodeURIComponent(locator.groupSlug)}/${encodeURIComponent(locator.bookSlug)}`;
-    if (!this.config.writeBookAllowlist.includes(bookUrl)) {
-      throw new Error(
-        "Target knowledge base is not present in YUQUE_WRITE_BOOK_ALLOWLIST",
-      );
-    }
+    throw new Error(
+      "Write access is disabled for this target; enable YUQUE_WRITE_ORGANIZATION_OPEN or YUQUE_WRITE_PERSONAL_OPEN for the target Host",
+    );
   }
 
   private assertAllowedYuqueHost(value: string): void {
