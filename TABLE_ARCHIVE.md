@@ -37,7 +37,7 @@
 
 ## 写入配置和支持范围
 
-使用当前用户自己的登录会话及语雀权限。部署者必须显式配置 `WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`，并在 `YUQUE_WRITE_BOOK_ALLOWLIST` 中列出精确知识库 URL（例如 `https://team.yuque.com/group/book`），按部署流程重启使配置生效。归档不会因组织空间默认开放写入而跳过精确白名单。`strict` 模式仍可预览；契约关闭、开关或白名单不满足时不会消耗确认令牌。不要让 AI 为完成业务请求擅自修改部署配置。
+使用当前用户自己的登录会话及语雀权限。部署者必须显式配置 `WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`、`YUQUE_WRITE_ORGANIZATION_OPEN=true`，按部署流程重启使配置生效。`strict` 模式仍可预览；契约关闭或开关不满足时不会消耗确认令牌。不要让 AI 为完成业务请求擅自修改部署配置。
 
 - 仅支持组织空间、同一知识库的两篇不同 `Table/laketable` 文档及 GRID 视图。每次只处理一行，不提供跨知识库记录归档或单次批量事务；多条记录可按下文顺序编排。源表最多 5000 行，目标在新增前须少于 5000 行，以保证复制后能完整回读。
 - 支持非空 `text`、`input`、`select`、`multiSelect`、`mention`、`date`、`progress` 字段。字段优先按相同 ID 匹配且名称/类型一致，否则必须唯一同名、同类型；单选/多选按标签映射目标选项，不直接复用跨表选项 ID。

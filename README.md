@@ -25,8 +25,8 @@
 | 个人 Doc 评论列表、创建、修改和删除                             | 已验证；仅修改/删除本人评论，删除需二次确认                  |
 | Doc历史版本列表、正文读取与恢复Preview                          | 已验证；恢复复用Doc安全写链路，不调用猜测的专用恢复接口      |
 | 既有文档/表格远程修改                                           | 默认`strict`只预览；部署者可显式启用受门禁的`best_effort`    |
-| 私有知识库 reader/editor 协作者管理                             | 已验证；默认关闭，需精确白名单及`best_effort`确认            |
-| Doc、Sheet 和知识库整对象删除                                   | 个人Host已验证；默认关闭，需显式开关、精确白名单和二次确认   |
+| 私有知识库 reader/editor 协作者管理                             | 已验证；默认关闭，需`best_effort`及协作者权限确认            |
+| Doc、Sheet 和知识库整对象删除                                   | 个人Host已验证；默认关闭，需显式开关和二次确认   |
 
 服务目前注册47个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。Table 新能力已在独立测试副本上完成真实 MCP 验收；并发与字段范围另见下文。
 
@@ -36,7 +36,7 @@
 
 ### Table 单条记录移动归档
 
-主 HTTP MCP 已提供 `yuque_preview_archive_table_record`，随后调用 `yuque_confirm_change` 即可自动完成“创建目标行、写入字段、回读核对、删除源行”。支持同一知识库组织 Table 的文本、单选、多选、人员、日期、进度等业务字段；字段或选项无法无损映射时拒绝。默认 `strict` 只预览，写入需要 `best_effort`、关闭写入急停、精确知识库白名单和删除确认。
+主 HTTP MCP 已提供 `yuque_preview_archive_table_record`，随后调用 `yuque_confirm_change` 即可自动完成“创建目标行、写入字段、回读核对、删除源行”。支持同一知识库组织 Table 的文本、单选、多选、人员、日期、进度等业务字段；字段或选项无法无损映射时拒绝。默认 `strict` 只预览，写入需要 `best_effort`、关闭写入急停、开启组织空间写和删除确认。
 
 `yuque_get_table_archive_status` 可查询加密操作日志，并用 `reconcile=true` 只读核对两个固定记录 ID。部分成功或结果未知时不得盲目重试。请求格式有真实抓包依据，新主 MCP 集成通过离线测试和测试副本上的真实 MCP 验收；不具备原子跨表事务。完整调用示例、字段范围和恢复边界见 [Table 归档说明](TABLE_ARCHIVE.md)。
 
@@ -50,7 +50,7 @@
 - `MCP_BEARER_TOKEN` 和 `SESSION_ENCRYPTION_KEY` 只保存在本地私密环境文件中，不应提交到 Git、截图或通过聊天发送。
 - 远程部署必须使用 HTTPS 或受保护的内网传输；Bearer Token 不能在不可信网络中通过明文 HTTP 发送。
 - 非回环`PUBLIC_BASE_URL`默认强制HTTPS；确需私网HTTP时必须由部署者显式接受风险。
-- 权限变更和整对象删除默认关闭，并可用精确知识库白名单进一步限制写入范围。
+- 权限变更和整对象删除默认关闭，并可用组织/个人空间写开关进一步限制写入范围。
 - 写入一致性默认使用`strict`，缺少可靠并发保护时只生成Preview，不发送远程请求。
 - `WRITE_KILL_SWITCH=true`可在事故或契约变化时关闭全部远程Confirm。
 - 登录完成后临时 Chromium 会话会关闭，日常业务请求不依赖持续运行的可视化浏览器。
@@ -153,7 +153,7 @@ npm run local:start
 WRITE_CONSISTENCY_MODE=strict
 ```
 
-`strict`模式允许读取和Preview，但会在发包前阻止缺少可靠并发保护的远程Confirm。部署者只有在接受语雀网页接口不存在原子CAS的限制后，才可显式设置`best_effort`；该模式仍然受同目标本地串行、语雀临时锁持有者核验、获取锁后二次版本/指纹重读、一次性Change Token、契约`liveWriteEnabled`、加密快照、单次写请求、超时只读对账和写后回读约束，不会绕过未验证接口门禁。已有知识库内的写入还必须命中精确知识库白名单（组织空间可设 `YUQUE_WRITE_ORGANIZATION_OPEN=true` 放开精确库清单、改由语雀账号权限兜底——无权限账号写请求会被语雀拒绝；个人空间写仍走精确白名单）；创建新的私有个人知识库没有预先存在的URL，因此改为绑定当前扫码账号、Confirm前同名检查、单次发包、超时对账和最终URL回读。Doc与Sheet快照都能生成恢复Preview并走相同锁与回读流程。
+`strict`模式允许读取和Preview，但会在发包前阻止缺少可靠并发保护的远程Confirm。部署者只有在接受语雀网页接口不存在原子CAS的限制后，才可显式设置`best_effort`；该模式仍然受同目标本地串行、语雀临时锁持有者核验、获取锁后二次版本/指纹重读、一次性Change Token、契约`liveWriteEnabled`、加密快照、单次写请求、超时只读对账和写后回读约束，不会绕过未验证接口门禁。已有知识库内的写入由组织/个人空间写开关启用（`YUQUE_WRITE_ORGANIZATION_OPEN=true` / `YUQUE_WRITE_PERSONAL_OPEN=true`），权限由语雀账号兜底——无权限账号写请求会被语雀拒绝；创建新的私有个人知识库没有预先存在的URL，因此改为绑定当前扫码账号、Confirm前同名检查、单次发包、超时对账和最终URL回读。Doc与Sheet快照都能生成恢复Preview并走相同锁与回读流程。
 
 ## Docker
 
@@ -168,7 +168,7 @@ docker compose up -d
 
 该profile衍生自Playwright `v1.62.1`仓库提交`26a9e470a7b3c7822084b09fb7f13902c5f37b51`的Docker seccomp配置；上游原文件SHA-256为`cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849`，本项目为适配`cap_drop=ALL`加入无条件`chroot`规则后的文件SHA-256为`b3995c4964bc2e3e7e87f38df281e5ad8cd8bfb76c6b31b65dea159d46cf1fdb`。CI会在完整容器限制下真实启动Chromium；仅做静态配置检查不算通过。
 
-服务支持`YUQUE_MCP_ENV_FILE`、`MCP_BEARER_TOKEN_FILE`与`SESSION_ENCRYPTION_KEY_FILE`，便于使用宿主机私密文件或Docker secrets。外网需要代理时配置`YUQUE_HTTPS_PROXY`；私有CA使用`YUQUE_CA_FILE`。服务明确拒绝`NODE_TLS_REJECT_UNAUTHORIZED=0`，并要求语雀Host为无凭据、无路径的HTTPS Origin；精确写入白名单不得越出已配置的个人或团队语雀Host。
+服务支持`YUQUE_MCP_ENV_FILE`、`MCP_BEARER_TOKEN_FILE`与`SESSION_ENCRYPTION_KEY_FILE`，便于使用宿主机私密文件或Docker secrets。外网需要代理时配置`YUQUE_HTTPS_PROXY`；私有CA使用`YUQUE_CA_FILE`。服务明确拒绝`NODE_TLS_REJECT_UNAUTHORIZED=0`，并要求语雀Host为无凭据、无路径的HTTPS Origin。
 
 ## 部署架构
 

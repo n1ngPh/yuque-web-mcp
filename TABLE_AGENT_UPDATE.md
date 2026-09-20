@@ -25,7 +25,7 @@
 
 1. 更新仓库 `main`，按现有部署流程安装依赖、运行 `npm run check` 并重新构建/重启服务。保留现有运行数据目录、用户会话、Bearer Token 和加密密钥；容器部署须重建或采用包含本次源码的镜像。
 2. Agent 重新连接后检查 `tools/list` 是否为 47 个工具且包含上述五个新工具，再用 `yuque_get_capabilities` 核对实际可用性。仅升级提示词不会增加服务能力。
-3. 写入由部署者明确启用：`WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`、精确的 `YUQUE_WRITE_BOOK_ALLOWLIST`。复制要求目标知识库在白名单内，移动要求两本均在白名单内；归档要求两表所在知识库在白名单内。默认 `strict` 仅预览，Agent 不应自行更改部署配置。
+3. 写入由部署者明确启用：`WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`、`YUQUE_WRITE_ORGANIZATION_OPEN=true`。复制/移动/归档均限组织 Host 的 Table，写权限由语雀账号体系兜底。默认 `strict` 仅预览，Agent 不应自行更改部署配置。
 
 记录归档限同一知识库的组织 Table，每次一行；支持文本、单选、多选、人员、日期和进度等已验证字段映射。拒绝非空行详情正文、无法映射的选项和不支持的非空字段。整篇复制/移动限同一组织 Host 的不同知识库、无子节点且只有一个工作表的 Table。每表最多 5000 条，归档目标新增前须少于 5000 条。
 

@@ -34,7 +34,7 @@
 
 `confirmation_text` 必须等于预览返回的 `display_path`。复制不要求 `confirm_deletions`，移动要求它确认原位置将消失。复制产生新文档 ID、行 ID 和系统元数据，保留原文档；移动保留文档 ID，但 URL/知识库发生变化。不会调用整对象删除接口，也不会自动删除测试副本。
 
-配置要求：`WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`。复制只要求目标知识库在 `YUQUE_WRITE_BOOK_ALLOWLIST` 中，源知识库可以只读；移动要求源、目标知识库均精确列入白名单。`YUQUE_WRITE_ORGANIZATION_OPEN` 不会绕过这项检查。`strict` 仍只预览，调用方不应自行调整部署配置。
+配置要求：`WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`。复制只要求目标知识库是组织 Host，源知识库可以只读；移动要求源、目标知识库均为组织 Host。写入由 `YUQUE_WRITE_ORGANIZATION_OPEN=true` 启用，权限由语雀账号体系兜底。`strict` 仍只预览，调用方不应自行调整部署配置。
 
 服务在确认前重新核对表格内容与两本目录，发出一个非幂等请求，然后根据 `meta.docIds` 定位新位置，并回读字段定义、每条业务记录及行详情。字段和选项按 ID 比较，忽略服务端枚举顺序；行记录按内容集合比较，不把复制后新的行 ID、创建人等系统元数据当作业务差异。评论、历史版本、视图展示布局不在完整性保证范围内。
 

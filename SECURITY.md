@@ -12,7 +12,7 @@ Do not open a public issue containing credentials, cookies, private document con
 
 - Run one instance per user with independent data, bearer token, encryption key, SQLite file, port, and Compose project.
 - Put remote instances behind HTTPS. Plain HTTP on a non-loopback public URL is rejected unless the deployment owner explicitly sets `ALLOW_INSECURE_HTTP=true`.
-- Keep `WRITE_CONSISTENCY_MODE=strict`, deletion and permission changes disabled, and the write allowlist empty until the deployment owner completes a sandbox review.
+- Keep `WRITE_CONSISTENCY_MODE=strict`, deletion and permission changes disabled, and the organization/personal write switches off until the deployment owner completes a sandbox review.
 - Use `WRITE_KILL_SWITCH=true` to stop all Confirm operations during an incident or contract regression.
 - Store secrets in owner-only files or Docker secrets. Never commit runtime data, environment files, backups, screenshots, HAR files, cookies, or tokens.
 - Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`. Configure `YUQUE_CA_FILE` for a trusted private CA.
@@ -26,6 +26,6 @@ Release and scheduled Trivy jobs block every HIGH or CRITICAL finding for which 
 
 ## Trust boundaries
 
-The MCP client may propose operations but cannot bypass Preview/Confirm, capability contracts, exact-path deletion confirmation, configuration gates, or the single-owner boundary. The deployment operator controls the host, image, secrets, write mode, allowlist, and network exposure. Yuque's web endpoints remain an external, versioned dependency and may change without notice.
+The MCP client may propose operations but cannot bypass Preview/Confirm, capability contracts, exact-path deletion confirmation, configuration gates, or the single-owner boundary. The deployment operator controls the host, image, secrets, write mode, write switches, and network exposure. Yuque's web endpoints remain an external, versioned dependency and may change without notice.
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for the detailed model.
