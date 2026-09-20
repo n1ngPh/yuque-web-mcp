@@ -370,7 +370,7 @@ function testConfig(
     publicBaseUrl: "http://127.0.0.1:3000",
     yuqueHost: host,
     personalYuqueHost: host,
-    organization: options.organization ? "pingansec" : "",
+    organization: options.organization ? "Example Organization" : "",
     dataDir,
     databasePath: join(dataDir, "state.db"),
     contractPath,

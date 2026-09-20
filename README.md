@@ -30,6 +30,12 @@
 
 服务目前注册42个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
 
+### 可选实验：Table 单条记录归档
+
+仓库公开提供了可独立运行的 [Table 归档实验 MCP](experiments/table-archive/README.md)，包含 `table-archive-core.mjs`、`table-archive-mcp.mjs`、私有计划生成命令、配置示例及离线测试。其他用户可使用自己的本地登录 profile 配置，无需开发者的私有研发目录。
+
+该工具通过独立 stdio 服务提供 `table_archive_preview`、`table_archive_stage`、`table_archive_finalize`、`table_archive_status`，按“复制、回读核对、移除源记录”归档自己的一条两字段简单记录。默认只允许预览，写入需要显式开关、`best_effort` 和精确知识库白名单。它尚未整合进主 HTTP MCP 的 42 个工具，也不是通用批量迁移能力；适用范围和中断处理见实验说明。
+
 ## 数据安全
 
 - 同一实例可安全服务多名用户：数据按 `sha256(ownerId)` 分文件隔离，每个用户拥有独立的 SQLite 数据库、加密登录态和租户上下文。也可为每名用户部署独立实例。不要跨用户共享 Bearer Token 或加密密钥。

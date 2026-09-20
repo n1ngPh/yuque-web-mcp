@@ -20,9 +20,9 @@
     "validate:skill": "node deploy/validate-skill.mjs",
     "audit:dependencies": "npm audit --audit-level=high",
     "soak:http": "node deploy/soak-http.mjs",
-    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\"",
-    "check": "npm run format:check && npm run validate:version && npm run typecheck && npm run test:coverage && npm run build && npm run validate:skill && npm run scan:public",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\" \"experiments/table-archive/*.mjs\" \"experiments/table-archive/*.json\" \"experiments/table-archive/*.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"deploy/*.mjs\" \"*.ts\" \"*.json\" \"contracts/*.json\" \"experiments/table-archive/*.mjs\" \"experiments/table-archive/*.json\" \"experiments/table-archive/*.md\"",
+    "check": "npm run format:check && npm run validate:version && npm run typecheck && npm run test:coverage && npm run build && npm run test:archive && npm run validate:skill && npm run scan:public",
     "start": "node dist/src/index.js",
     "admin": "node dist/src/admin.js",
     "local:start": "node deploy/local.mjs serve",
@@ -32,7 +32,10 @@
     "start-instance": "node dist/src/instance-admin.js start",
     "status-instance": "node dist/src/instance-admin.js status",
     "backup-instance": "node dist/src/instance-admin.js backup",
-    "upgrade-instance": "node dist/src/instance-admin.js upgrade"
+    "upgrade-instance": "node dist/src/instance-admin.js upgrade",
+    "test:archive": "node --test experiments/table-archive/*.test.mjs",
+    "archive:init": "node experiments/table-archive/init-plan.mjs",
+    "archive:serve": "node experiments/table-archive/table-archive-mcp.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "envFile": "/absolute/profile/local.env",
+  "sourceUrl": "https://team.yuque.com/group/book/source",
+  "targetUrl": "https://team.yuque.com/group/book/archive",
+  "source": {
+    "id": 101,
+    "bookId": 10,
+    "sheetId": "source-sheet",
+    "slug": "source"
+  },
+  "target": {
+    "id": 102,
+    "bookId": 10,
+    "sheetId": "archive-sheet",
+    "slug": "archive"
+  },
+  "sourceRecordId": "source-record-id",
+  "targetRecordId": "generate-a-new-id-once",
+  "accountId": "123",
+  "accountName": "Example User",
+  "expectedText": "Archive experiment",
+  "textFieldName": "具体工作内容",
+  "ownerFieldName": "负责人"
+}
