@@ -27,6 +27,14 @@
 2. Agent 重新连接后检查 `tools/list` 是否为 47 个工具且包含上述五个新工具，再用 `yuque_get_capabilities` 核对实际可用性。仅升级提示词不会增加服务能力。
 3. 写入由部署者明确启用：`WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`、`YUQUE_WRITE_ORGANIZATION_OPEN=true`。复制/移动/归档均限组织 Host 的 Table，写权限由语雀账号体系兜底。默认 `strict` 仅预览，Agent 不应自行更改部署配置。
 
+### 从知识库白名单配置迁移
+
+主 HTTP MCP 已移除 `YUQUE_WRITE_BOOK_ALLOWLIST`，旧配置中的该项不再生效，也不会自动转换成开放写入。已有实例保留原数据目录与密钥，由部署者检查实际加载的环境文件，按目标空间明确配置 `YUQUE_WRITE_ORGANIZATION_OPEN` / `YUQUE_WRITE_PERSONAL_OPEN`，重启后生效。两项缺省值都是 `false`；仅保留旧白名单并设置 `best_effort` 不足以启用已有知识库内的写入。
+
+新的开关适用于对应 Host 下账号有权限的知识库，不能等同于旧的单知识库授权范围；如果仍需只操作指定测试库，应先保持写入关闭并评估迁移范围。不要自动把旧白名单转换为两个开关均为 `true`。
+
+本次修复同步了 MCP 初始化指令、工具描述及本地/容器/实例配置模板，并补齐 Doc/Sheet 创建测试的新开关配置和关闭状态验证。部署更新后，Agent 应重新连接 MCP、刷新缓存的工具说明，停止把精确知识库白名单当作主服务前置条件。旧独立 stdio 归档实验仍保留自己的白名单与 `--enable-writes` 门禁，详见其实验 README；主服务规则不替代独立实验的配置要求。
+
 记录归档限同一知识库的组织 Table，每次一行；支持文本、单选、多选、人员、日期和进度等已验证字段映射。拒绝非空行详情正文、无法映射的选项和不支持的非空字段。整篇复制/移动限同一组织 Host 的不同知识库、无子节点且只有一个工作表的 Table。每表最多 5000 条，归档目标新增前须少于 5000 条。
 
 归档产生新的行 ID 和系统时间；评论与历史不迁移。没有原子跨表事务、整批回滚或自动恢复。完整参数与边界见 [记录归档](TABLE_ARCHIVE.md) 和 [文档复制、移动、导出](TABLE_OPERATIONS.md)。原独立 stdio 实验工具继续保留，新接入优先使用主 HTTP MCP。

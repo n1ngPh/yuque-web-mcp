@@ -19,6 +19,20 @@ afterEach(async () => {
 });
 
 describe("Doc creation reconciliation", () => {
+  it.each([false, undefined])(
+    "blocks personal Doc creation when the personal write switch is %s even if organization writes are enabled",
+    async (writePersonalOpen) => {
+      const fixture = await createFixture({
+        initiallyMounted: true,
+        writePolicy: { writePersonalOpen, writeOrganizationOpen: true },
+      });
+      await expect(fixture.create()).rejects.toThrow(
+        "Write access is disabled for this target",
+      );
+      expect(fixture.calls()).toEqual({ create: 0, mount: 0 });
+    },
+  );
+
   it("reconciles a timed-out POST that actually created the Doc without retrying", async () => {
     const fixture = await createFixture({
       postTimesOut: true,
@@ -95,6 +109,7 @@ describe("Doc creation reconciliation", () => {
 });
 
 interface FixtureOptions {
+  writePolicy?: Pick<AppConfig, "writePersonalOpen" | "writeOrganizationOpen">;
   postTimesOut?: boolean;
   createBeforeTimeout?: boolean;
   initiallyMounted: boolean;
@@ -215,7 +230,10 @@ async function createFixture(options: FixtureOptions): Promise<{
     savedAt: new Date().toISOString(),
   });
   const client = new YuqueWebClient(
-    testConfig(directory, contractPath, origin),
+    {
+      ...testConfig(directory, contractPath, origin),
+      ...options.writePolicy,
+    },
     await ContractRegistry.load(contractPath),
     sessions,
     { render: async () => html },
@@ -353,6 +371,7 @@ function testConfig(
     changeTtlSeconds: 600,
     requestTimeoutMs: 30,
     writeConsistencyMode: "best_effort",
+    writePersonalOpen: true,
     allowUnverifiedContracts: false,
   };
 }

@@ -157,6 +157,8 @@ WRITE_CONSISTENCY_MODE=strict
 
 ## Docker
 
+从旧版本升级时，主 HTTP MCP 不再读取 `YUQUE_WRITE_BOOK_ALLOWLIST`。已有环境文件不会被自动改为开放写入；部署者需按实际需要配置组织/个人空间开关并重启，Agent 需重新连接以刷新工具说明。新开关覆盖对应 Host 下账号有权限的知识库，范围比单库白名单更广。迁移步骤见 [Agent 更新说明](TABLE_AGENT_UPDATE.md#从知识库白名单配置迁移)。
+
 仓库提供 `Dockerfile`、`compose.yaml` 和 `deploy/service.env.example`。部署前复制环境变量示例到宿主机的私密路径，填写随机 Token、加密密钥、公开访问地址和允许的 Host，再启动 Compose。
 
 ```bash

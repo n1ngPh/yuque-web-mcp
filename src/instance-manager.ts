@@ -442,6 +442,7 @@ function serviceEnvironment(record: InstanceRecord): string {
     "ALLOW_UNVERIFIED_CONTRACTS=false",
     "ALLOW_OBJECT_DELETION=false",
     "ALLOW_PERMISSION_CHANGES=false",
+    "YUQUE_WRITE_ORGANIZATION_OPEN=false",
     "YUQUE_WRITE_PERSONAL_OPEN=false",
     "ALLOW_INSECURE_HTTP=false",
     "MAX_MCP_SESSIONS=32",

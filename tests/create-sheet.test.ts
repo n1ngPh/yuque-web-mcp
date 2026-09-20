@@ -19,6 +19,20 @@ afterEach(async () => {
 });
 
 describe("Sheet creation reconciliation", () => {
+  it.each([false, undefined])(
+    "blocks personal Sheet creation when the personal write switch is %s even if organization writes are enabled",
+    async (writePersonalOpen) => {
+      const fixture = await createFixture({
+        initiallyMounted: false,
+        writePolicy: { writePersonalOpen, writeOrganizationOpen: true },
+      });
+      await expect(fixture.create()).rejects.toThrow(
+        "Write access is disabled for this target",
+      );
+      expect(fixture.calls()).toEqual({ create: 0, mount: 0, initialize: 0 });
+    },
+  );
+
   it("creates one empty root Sheet with catalog insertion in the POST and reads it back", async () => {
     const fixture = await createFixture({ initiallyMounted: false });
 
@@ -142,6 +156,7 @@ describe("Sheet creation reconciliation", () => {
 });
 
 interface FixtureOptions {
+  writePolicy?: Pick<AppConfig, "writePersonalOpen" | "writeOrganizationOpen">;
   initiallyMounted: boolean;
   postTimesOut?: boolean;
   createBeforeTimeout?: boolean;
@@ -274,7 +289,10 @@ async function createFixture(options: FixtureOptions): Promise<{
     savedAt: new Date().toISOString(),
   });
   const client = new YuqueWebClient(
-    testConfig(directory, contractPath, origin),
+    {
+      ...testConfig(directory, contractPath, origin),
+      ...options.writePolicy,
+    },
     await ContractRegistry.load(contractPath),
     sessions,
   );
@@ -434,6 +452,7 @@ function testConfig(
     changeTtlSeconds: 600,
     requestTimeoutMs: 30,
     writeConsistencyMode: "best_effort",
+    writePersonalOpen: true,
     allowUnverifiedContracts: false,
   };
 }

@@ -72,8 +72,7 @@ describe("native Table document transfer and export", () => {
   ])("blocks %s before consuming the transfer token", async (gate) => {
     const f = await fixture(),
       p = await f.preview("move");
-    if (gate === "organization-open")
-      f.config.writeOrganizationOpen = false;
+    if (gate === "organization-open") f.config.writeOrganizationOpen = false;
     if (gate === "strict") f.config.writeConsistencyMode = "strict";
     if (gate === "kill") f.config.writeKillSwitch = true;
     await expect(

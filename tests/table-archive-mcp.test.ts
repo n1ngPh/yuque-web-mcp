@@ -82,8 +82,7 @@ describe("main MCP Table archive with synthetic HTTP upstream", () => {
         preview = await f.preview();
       if (mode === "strict") f.config.writeConsistencyMode = "strict";
       if (mode === "kill") f.config.writeKillSwitch = true;
-      if (mode === "organization-open")
-        f.config.writeOrganizationOpen = false;
+      if (mode === "organization-open") f.config.writeOrganizationOpen = false;
       await expect(
         f.changes.confirmChange(
           "employee.a",

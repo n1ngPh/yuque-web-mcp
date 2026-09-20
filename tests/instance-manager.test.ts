@@ -53,6 +53,8 @@ describe("single-owner instance manager", () => {
       secondEnv.SESSION_ENCRYPTION_KEY,
     );
     expect(firstEnv.WRITE_CONSISTENCY_MODE).toBe("strict");
+    expect(firstEnv.YUQUE_WRITE_ORGANIZATION_OPEN).toBe("false");
+    expect(firstEnv.YUQUE_WRITE_PERSONAL_OPEN).toBe("false");
     expect((await stat(firstEnvPath)).mode & 0o777).toBe(0o600);
     expect(
       (await stat(join(String(first.directory), "data"))).mode & 0o777,

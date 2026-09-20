@@ -57,15 +57,15 @@ interface ToolDefinition {
 }
 
 export const MCP_INSTRUCTIONS = `语雀网页会话 MCP（安全自托管版）。
-能力发现规则：任何工作流开始前优先调用 yuque_get_capabilities。availability=disabled 的能力不得尝试；preview_only 只允许生成本地Diff，不代表可以远程Confirm。WRITE_CONSISTENCY_MODE默认strict，缺少可靠并发保护时远程Confirm会在发包前失败关闭；只有部署者显式启用best_effort且目标命中精确知识库白名单（或组织空间设置 YUQUE_WRITE_ORGANIZATION_OPEN=true 放开精确清单、改由语雀账号权限兜底）时才允许进入已验证写契约。
+能力发现规则：任何工作流开始前优先调用 yuque_get_capabilities。availability=disabled 的能力不得尝试；preview_only 只允许生成本地Diff，不代表可以远程Confirm。WRITE_CONSISTENCY_MODE默认strict，缺少可靠并发保护时远程Confirm会在发包前失败关闭；已有知识库内的写入只有部署者显式启用best_effort、设置WRITE_KILL_SWITCH=false，并按目标Host启用YUQUE_WRITE_ORGANIZATION_OPEN=true或YUQUE_WRITE_PERSONAL_OPEN=true时才允许进入已验证写契约；实际权限仍由当前语雀账号决定。Agent不得自行修改部署配置。
 个人/空间作用域规则：先调用 yuque_list_scopes 发现当前用户可用作用域。读取个人空间时给列表或索引工具显式传 scope_id=personal；读取公司空间时传 scope_id=organization 或返回的 organization:<id>。给定完整知识库或文档URL的工具会自动识别Host和作用域。不得调用或猜测网页全局“切换空间”接口，因为并发会话之间不能共享可变上下文。
 强制路径提示规则：用户询问任何文档或目录时，回答正文、摘要或目录内容之前，必须先输出“完整路径：<个人：姓名或空间：组织 / 知识库名 / 目录层级 / 文档名>”和对应URL。不得只报标题。若同名结果位于不同路径，必须列出每个候选的完整路径和URL并让用户确认，未确认前不得自行选择。
-删除边界规则：Doc、Sheet和个人知识库整对象删除工具存在，但默认关闭；只有部署者显式开启、目标命中精确知识库白名单且专用个人Host契约完成真实捕获、关闭浏览器重放和删除后对账时才生成Preview。Preview必须展示完整路径和不可恢复影响；Confirm除diff_digest及confirm_deletions=true外还必须原样提交完整路径confirmation_text。非空知识库还必须在Preview显式allow_nonempty=true。DELETE方法本身不等于资源删除，例如DELETE /lock仅释放临时协作锁。
+删除边界规则：Doc、Sheet和个人知识库整对象删除工具存在，但默认关闭；只有部署者显式开启ALLOW_OBJECT_DELETION=true、YUQUE_WRITE_PERSONAL_OPEN=true且专用个人Host契约完成真实捕获、关闭浏览器重放和删除后对账时才生成Preview。Preview必须展示完整路径和不可恢复影响；Confirm除diff_digest及confirm_deletions=true外还必须原样提交完整路径confirmation_text。非空知识库还必须在Preview显式allow_nonempty=true。DELETE方法本身不等于资源删除，例如DELETE /lock仅释放临时协作锁。
 目录变更规则：个人私有知识库中的TITLE分组创建、重命名、移动与空分组删除，以及Doc/Sheet目录项在目录树内的移动已完成真实验证；先调用yuque_get_toc取得完整路径和UUID，再调用yuque_preview_change_catalog。删除只允许无任何子节点的空分组，必须展示完整路径并进行删除双确认；不得通过目录工具删除Doc或Sheet整对象。
 评论规则：个人空间普通Doc的评论列表以及当前用户自己评论的创建、修改、删除已完成网页捕获和关浏览器发包验证。先用yuque_list_comments读取完整文档路径和comment_id；写入统一使用yuque_preview_change_comment。删除评论只删除单条评论内容，不删除Doc，但仍必须展示Diff并以confirm_deletions=true二次确认。
 版本规则：个人空间普通Doc的历史版本列表和指定版本正文读取使用已验证网页接口；先展示原文档完整路径和URL，再展示version_id、版本时间和作者。历史版本恢复必须通过yuque_preview_restore_doc_version；它复用已验证的原生Doc内容写入链路，不调用或猜测专用恢复接口，并继续执行Preview/Confirm、锁、快照、冲突检查和回读。
 原生导出规则：个人或公司空间导出前先调用yuque_get_export_options，展示完整路径、URL和目标类型对应的available_formats并让用户选择；用户已经明确指定格式时可直接调用yuque_create_export_link。普通Doc支持Word、Markdown、PDF、语雀Lake、JPG，LakeSheet支持Excel和语雀LakeSheet，组织Table/laketable仅支持Excel，不得给目标类型传入其他格式。服务按语雀官方页面规则轮询异步导出任务，只返回语雀生成的链接，不下载、不缓存导出文件，也不把完整签名链接写入数据库或审计日志。返回browser_login_required=true时，用户必须在自己的浏览器中登录同一语雀账号后打开链接；临时签名链接等同短期访问凭据，不得转发给无关人员。
-当前已真实验证并允许调用的能力：登录状态、绑定用户、个人/公司作用域发现、个人/公司自有知识库、个人受邀知识库及reader/editor角色、私有个人知识库协作者列表与权限变更、目录、全局文档位置、Doc纯文本读取、企业/知识库全文搜索、Markdown转Lake、LakeSheet值/公式/已支持基础格式范围读取、多工作表与空工作簿读取，以及本地退出。个人/组织Host的Doc正文追加/章节替换/章节删除/改标题、个人Host的历史版本读取与经安全Doc链路恢复、Sheet值/公式/基础格式和已验证工作表操作已完成strict阻断与best_effort真实Preview/Confirm、临时锁、写前加密快照、单次写入、超时只读对账、写后回读及Doc/Sheet快照恢复；strict仍不发远程内容写请求。共享知识库完整路径使用“共享：<所有者> / <知识库> / ...”；邀请创建后接收方仍需在语雀确认加入。权限变更默认关闭，只有ALLOW_PERMISSION_CHANGES=true、best_effort和精确知识库白名单同时满足时才能Confirm。个人空间的全局全文搜索尚未验证，必须提供个人 book_url 做知识库范围搜索。Sheet Preview中的公式缓存值由服务自行计算，当前只支持四则运算和SUM/AVERAGE/MIN/MAX/COUNT/COUNTA/IF/AND/OR/NOT/COUNTIF/SUMIF/COUNTIFS/SUMIFS/AVERAGEIF/AVERAGEIFS/COUNTBLANK/LARGE/SMALL/STDEVP/VARP/STDEVS/VARS/ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISEVEN/ISODD/ABS/ROUND/CEILING/FLOOR/SUMPRODUCT/CHOOSE/RANK/SIGN/PI/EXP/LN/LOG/LOG10/TRUNC/MROUND/QUOTIENT/SIN/COS/TAN/DEGREES/RADIANS/FACT/GCD/LCM/COMBIN/SUMSQ/CONCAT/CONCATENATE/LEFT/RIGHT/MID/LEN/LOWER/UPPER/TRIM/FIND/SEARCH/SUBSTITUTE/REPLACE/REPT/EXACT/ROUNDUP/ROUNDDOWN/INT/MOD/SQRT/POWER/PRODUCT/MEDIAN/VLOOKUP/HLOOKUP/MATCH/INDEX；其中STDEVP/VARP只接受至少1个数值的单一范围，STDEVS/VARS只接受至少2个数值的单一范围，非数值格忽略；VLOOKUP/HLOOKUP/MATCH只允许已验证的精确匹配模式，RANK只允许降序模式0，CEILING/FLOOR只允许非负值和正步长，SUMPRODUCT只允许两个等维纯数值范围，CHOOSE只允许标量候选，LOG和TRUNC只允许已验证的两参数形式，MROUND只允许非负数和正倍数，LN/LOG10拒绝非正数，QUOTIENT拒绝零除数，FACT与COMBIN只接受0至170的安全整数范围，GCD/LCM只接受非负安全整数且LCM拒绝超出安全整数的结果，SUMSQ只接受标量参数，FIND/SEARCH只允许带明确起始位置的三参数形式，SUBSTITUTE只允许三参数全量替换，SUBSTITUTE/REPLACE/REPT结果最多10,000字符，多条件函数要求范围维度一致且拒绝通配符。调用方提交的formula.value会被忽略，普通单元格变化会重算同表既有公式并进入Diff，未知函数和循环引用会拒绝。固定包不支持MAXIFS/MINIFS，NOW/TODAY/RAND等易变函数也保持关闭，不能猜测开放。个人测试表已验证column/stackColumn/bar/stackBar/line/smoothLine/pie/ring八类图表的类型字段写入、回读与完整恢复；其中column还验证了6套主题、6套布局以及边框、隐藏/空数据展示、网格线、Y轴格式化及前后缀、标题/轴标题、图例、数据标签、X轴标签与旋转、Y轴上下限等21个显示配置路径。个人Host现在允许通过yuque_preview_update_sheet生成严格白名单图表Diff：create_column_chart仅限无其他内容或vessel的单工作表A1:B3六个简单单元格结构，set_chart_type支持八类已验证类型，update_column_chart_display仅限column及已验证字段，delete_chart仅限完成网页捕获、关闭浏览器重放和精确恢复的同形态单柱状图；删除Preview必须展示图表类型、来源范围和工作表并要求confirm_deletions=true。所有图表Preview只本地编解码且可取消，不发送远程写请求。原始vessels/chartConfigs永不接受或输出，图表Confirm仍关闭。Lake转Markdown和图表Confirm继续安全失败关闭；禁止猜测接口或绕过门禁。
+当前已真实验证并允许调用的能力：登录状态、绑定用户、个人/公司作用域发现、个人/公司自有知识库、个人受邀知识库及reader/editor角色、私有个人知识库协作者列表与权限变更、目录、全局文档位置、Doc纯文本读取、企业/知识库全文搜索、Markdown转Lake、LakeSheet值/公式/已支持基础格式范围读取、多工作表与空工作簿读取，以及本地退出。个人/组织Host的Doc正文追加/章节替换/章节删除/改标题、个人Host的历史版本读取与经安全Doc链路恢复、Sheet值/公式/基础格式和已验证工作表操作已完成strict阻断与best_effort真实Preview/Confirm、临时锁、写前加密快照、单次写入、超时只读对账、写后回读及Doc/Sheet快照恢复；strict仍不发远程内容写请求。共享知识库完整路径使用“共享：<所有者> / <知识库> / ...”；邀请创建后接收方仍需在语雀确认加入。权限变更默认关闭，只有ALLOW_PERMISSION_CHANGES=true、YUQUE_WRITE_PERSONAL_OPEN=true、best_effort及WRITE_KILL_SWITCH=false同时满足时才能Confirm。个人空间的全局全文搜索尚未验证，必须提供个人 book_url 做知识库范围搜索。Sheet Preview中的公式缓存值由服务自行计算，当前只支持四则运算和SUM/AVERAGE/MIN/MAX/COUNT/COUNTA/IF/AND/OR/NOT/COUNTIF/SUMIF/COUNTIFS/SUMIFS/AVERAGEIF/AVERAGEIFS/COUNTBLANK/LARGE/SMALL/STDEVP/VARP/STDEVS/VARS/ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISEVEN/ISODD/ABS/ROUND/CEILING/FLOOR/SUMPRODUCT/CHOOSE/RANK/SIGN/PI/EXP/LN/LOG/LOG10/TRUNC/MROUND/QUOTIENT/SIN/COS/TAN/DEGREES/RADIANS/FACT/GCD/LCM/COMBIN/SUMSQ/CONCAT/CONCATENATE/LEFT/RIGHT/MID/LEN/LOWER/UPPER/TRIM/FIND/SEARCH/SUBSTITUTE/REPLACE/REPT/EXACT/ROUNDUP/ROUNDDOWN/INT/MOD/SQRT/POWER/PRODUCT/MEDIAN/VLOOKUP/HLOOKUP/MATCH/INDEX；其中STDEVP/VARP只接受至少1个数值的单一范围，STDEVS/VARS只接受至少2个数值的单一范围，非数值格忽略；VLOOKUP/HLOOKUP/MATCH只允许已验证的精确匹配模式，RANK只允许降序模式0，CEILING/FLOOR只允许非负值和正步长，SUMPRODUCT只允许两个等维纯数值范围，CHOOSE只允许标量候选，LOG和TRUNC只允许已验证的两参数形式，MROUND只允许非负数和正倍数，LN/LOG10拒绝非正数，QUOTIENT拒绝零除数，FACT与COMBIN只接受0至170的安全整数范围，GCD/LCM只接受非负安全整数且LCM拒绝超出安全整数的结果，SUMSQ只接受标量参数，FIND/SEARCH只允许带明确起始位置的三参数形式，SUBSTITUTE只允许三参数全量替换，SUBSTITUTE/REPLACE/REPT结果最多10,000字符，多条件函数要求范围维度一致且拒绝通配符。调用方提交的formula.value会被忽略，普通单元格变化会重算同表既有公式并进入Diff，未知函数和循环引用会拒绝。固定包不支持MAXIFS/MINIFS，NOW/TODAY/RAND等易变函数也保持关闭，不能猜测开放。个人测试表已验证column/stackColumn/bar/stackBar/line/smoothLine/pie/ring八类图表的类型字段写入、回读与完整恢复；其中column还验证了6套主题、6套布局以及边框、隐藏/空数据展示、网格线、Y轴格式化及前后缀、标题/轴标题、图例、数据标签、X轴标签与旋转、Y轴上下限等21个显示配置路径。个人Host现在允许通过yuque_preview_update_sheet生成严格白名单图表Diff：create_column_chart仅限无其他内容或vessel的单工作表A1:B3六个简单单元格结构，set_chart_type支持八类已验证类型，update_column_chart_display仅限column及已验证字段，delete_chart仅限完成网页捕获、关闭浏览器重放和精确恢复的同形态单柱状图；删除Preview必须展示图表类型、来源范围和工作表并要求confirm_deletions=true。所有图表Preview只本地编解码且可取消，不发送远程写请求。原始vessels/chartConfigs永不接受或输出，图表Confirm仍关闭。Lake转Markdown和图表Confirm继续安全失败关闭；禁止猜测接口或绕过门禁。
 推荐读取流程：先调用 yuque_auth_status；未登录时依次调用 yuque_login_begin 和 yuque_login_status。然后调用 yuque_list_scopes 并选择显式 scope_id。查找文档优先调用 yuque_list_all_docs，使用 query 按标题、知识库、完整目录路径或 URL 过滤，并用 offset/limit 分页；只在明确需要单个知识库目录时调用 yuque_get_toc 或 yuque_list_docs。定位目标后，把返回的完整 url 作为 doc_url 调用 yuque_get_doc。
 yuque_list_all_docs 只返回位置索引，不返回正文；不要试图一次读取所有文档正文。其索引缓存五分钟，只有必须获取最新目录时才设置 force_refresh=true。yuque_get_doc 对普通文档返回 plain_text 正文以及 version、updated_at、fingerprint 等元数据；遇到Table/laketable自动返回table_records。数据表继续读取使用yuque_get_table的next_offset，不使用正文cursor；底层记录不应用网页视图筛选，不能把空views.data认定为空表。Table单条归档使用yuque_preview_archive_table_record和yuque_confirm_change，Confirm自动创建并核对目标后才删除源记录；不支持的非空字段或详情正文必须停止。unknown/partial先调用yuque_get_table_archive_status(reconcile=true)只读对账，禁止盲目重试或新建重复归档。
 “全部文档”仅指当前用户语雀权限范围内的可见文档，服务不会也不能绕过语雀权限。当前实例支持多名用户（单实例多租户）；每名用户使用独立的 Bearer Token 和语雀登录态，数据按 sha256(ownerId) 分文件隔离，互不共享。
@@ -474,7 +474,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   ...(["copy", "move"] as const).map((action) => ({
     name: `yuque_preview_${action}_table`,
-    description: `预览${action === "copy" ? "复制" : "跨知识库移动"}一篇组织Table/laketable文档到同Host另一知识库的根目录或现有TITLE目录。不含子文档。返回完整路径、权限范围、记录数及Diff；确认用yuque_confirm_change，传diff_digest及confirmation_text=返回的display_path。移动还需confirm_deletions=true。复制保留源文档，移动保留文档ID但改变URL。写入只允许best_effort及精确白名单；超时或partial先调用yuque_get_table_transfer_status对账，不自动重试或清理。`,
+    description: `预览${action === "copy" ? "复制" : "跨知识库移动"}一篇组织Table/laketable文档到同Host另一知识库的根目录或现有TITLE目录。不含子文档。返回完整路径、权限范围、记录数及Diff；确认用yuque_confirm_change，传diff_digest及confirmation_text=返回的display_path。移动还需confirm_deletions=true。复制保留源文档，移动保留文档ID但改变URL。写入要求best_effort、WRITE_KILL_SWITCH=false及YUQUE_WRITE_ORGANIZATION_OPEN=true；超时或partial先调用yuque_get_table_transfer_status对账，不自动重试或清理。`,
     inputSchema: objectSchema(
       {
         source_doc_url: stringProperty("Full source Table URL."),
@@ -503,7 +503,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_archive_table_record",
     description:
-      "预览将组织空间 Table 的单条记录移动归档到同一知识库的另一张 Table。读取源记录，按字段 ID 或唯一同名同类型映射，校验单选/多选标签、日期、进度和人员，返回完整 Diff 与 change_token。之后调用 yuque_confirm_change，自动完成创建、写入、回读核对、删除源记录。确认必须传 diff_digest 和 confirm_deletions=true；strict 仅预览，写入要求 best_effort 与精确知识库白名单。拒绝非空行详情正文和不支持字段；每表最多5000行。部分成功/结果未知时调用状态工具只读对账，禁止盲目重试。",
+      "预览将组织空间 Table 的单条记录移动归档到同一知识库的另一张 Table。读取源记录，按字段 ID 或唯一同名同类型映射，校验单选/多选标签、日期、进度和人员，返回完整 Diff 与 change_token。之后调用 yuque_confirm_change，自动完成创建、写入、回读核对、删除源记录。确认必须传 diff_digest 和 confirm_deletions=true；strict 仅预览，写入要求 best_effort、WRITE_KILL_SWITCH=false 与 YUQUE_WRITE_ORGANIZATION_OPEN=true。拒绝非空行详情正文和不支持字段；每表最多5000行。部分成功/结果未知时调用状态工具只读对账，禁止盲目重试。",
     inputSchema: {
       type: "object",
       properties: {
@@ -563,7 +563,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_update_book",
     description:
-      "预览修改个人知识库名称或描述；不修改公开性、所有者或组织归属。目标必须命中精确写入白名单。",
+      "预览修改个人知识库名称或描述；不修改公开性、所有者或组织归属。需要部署者启用YUQUE_WRITE_PERSONAL_OPEN=true。",
     inputSchema: {
       type: "object",
       properties: {
@@ -662,7 +662,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_delete_doc",
     description:
-      "预览将整篇普通Doc移出活动目录（trashed，不宣称硬删除）。默认关闭；必须命中个人Host精确白名单。Confirm前须展示完整Diff，提交confirm_deletions=true及原样完整路径；Confirm会先保存7天加密快照。",
+      "预览将整篇普通Doc移出活动目录（trashed，不宣称硬删除）。默认关闭；必须启用ALLOW_OBJECT_DELETION=true和YUQUE_WRITE_PERSONAL_OPEN=true。Confirm前须展示完整Diff，提交confirm_deletions=true及原样完整路径；Confirm会先保存7天加密快照。",
     inputSchema: {
       type: "object",
       properties: { doc_url: stringProperty("Full Yuque Doc URL.") },
@@ -673,7 +673,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_delete_sheet",
     description:
-      "预览将整份独立Sheet移出活动目录（trashed，不宣称硬删除）。默认关闭；严格校验Sheet类型与个人Host精确白名单。Confirm前须展示Diff，提交confirm_deletions=true及原样完整路径；Confirm会先保存7天加密快照。",
+      "预览将整份独立Sheet移出活动目录（trashed，不宣称硬删除）。默认关闭；严格校验Sheet类型与个人Host，必须启用ALLOW_OBJECT_DELETION=true和YUQUE_WRITE_PERSONAL_OPEN=true。Confirm前须展示Diff，提交confirm_deletions=true及原样完整路径；Confirm会先保存7天加密快照。",
     inputSchema: {
       type: "object",
       properties: { doc_url: stringProperty("Full Yuque Sheet URL.") },
@@ -728,7 +728,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_update_doc",
     description:
-      "生成Doc安全Diff，支持append、replace_section、delete_section和rename。delete_section删除完整命名章节并强制二次确认；含专有块时拒绝删除。首版不开放整篇替换。该工具只生成Preview；strict阻止Confirm，best_effort还需个人Host精确知识库白名单。",
+      "生成Doc安全Diff，支持append、replace_section、delete_section和rename。delete_section删除完整命名章节并强制二次确认；含专有块时拒绝删除。首版不开放整篇替换。该工具只生成Preview；strict阻止Confirm，best_effort还需WRITE_KILL_SWITCH=false，并按目标Host启用YUQUE_WRITE_PERSONAL_OPEN=true或YUQUE_WRITE_ORGANIZATION_OPEN=true。",
     inputSchema: {
       type: "object",
       properties: {
@@ -782,7 +782,7 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: "yuque_preview_update_sheet",
     description:
-      "预览Sheet的set_range、append_rows、add_worksheet、已验证空且无引用工作表上的rename_worksheet，以及受限delete_rows/delete_columns/delete_worksheet操作；个人Host还支持严格白名单图表Preview：create_column_chart、set_chart_type、update_column_chart_display、delete_chart。重命名一次只能提交一个，名称须符合语雀规则；非空或被公式/图表引用的工作表失败关闭。图表操作一次只能提交一个，不能与单元格操作混合，不接受原始vessels或chartConfigs；delete_chart进入删除Diff并强制二次确认。所有图表操作只在本地编码、解码和生成Diff，图表Confirm保持关闭。单元格和结构删除均进入Diff并强制二次确认。结构删除当前只允许一次删除第11行(start_row=11,count=1)、第11列(start_column=11,count=1)，或无任何引用/结构的空工作表；含数据、公式、图表、合并、筛选、保护规则或未知字段时失败关闭。公式只允许已验证函数，缓存value由服务重算。该工具只生成Preview；内容Confirm在strict下阻断，best_effort还需个人Host精确知识库白名单。",
+      "预览Sheet的set_range、append_rows、add_worksheet、已验证空且无引用工作表上的rename_worksheet，以及受限delete_rows/delete_columns/delete_worksheet操作；个人Host还支持严格白名单图表Preview：create_column_chart、set_chart_type、update_column_chart_display、delete_chart。重命名一次只能提交一个，名称须符合语雀规则；非空或被公式/图表引用的工作表失败关闭。图表操作一次只能提交一个，不能与单元格操作混合，不接受原始vessels或chartConfigs；delete_chart进入删除Diff并强制二次确认。所有图表操作只在本地编码、解码和生成Diff，图表Confirm保持关闭。单元格和结构删除均进入Diff并强制二次确认。结构删除当前只允许一次删除第11行(start_row=11,count=1)、第11列(start_column=11,count=1)，或无任何引用/结构的空工作表；含数据、公式、图表、合并、筛选、保护规则或未知字段时失败关闭。公式只允许已验证函数，缓存value由服务重算。该工具只生成Preview；内容Confirm在strict下阻断，best_effort还需WRITE_KILL_SWITCH=false及YUQUE_WRITE_PERSONAL_OPEN=true。",
     inputSchema: {
       type: "object",
       properties: {
