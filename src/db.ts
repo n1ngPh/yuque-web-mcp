@@ -219,6 +219,16 @@ export class AppDatabase {
       .get(changeId) as PendingChangeRow | undefined;
   }
 
+  updateExecutingPayload(changeId: string, encryptedPayload: string): void {
+    const result = this.db
+      .prepare(
+        "UPDATE pending_changes SET encrypted_payload = ?, updated_at = ? WHERE change_id = ? AND state = 'executing'",
+      )
+      .run(encryptedPayload, new Date().toISOString(), changeId);
+    if (result.changes !== 1)
+      throw new Error("Archive operation is no longer executing");
+  }
+
   transitionPendingChange(
     changeId: string,
     from: ChangeState[],

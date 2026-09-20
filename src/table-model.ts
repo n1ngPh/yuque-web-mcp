@@ -9,6 +9,22 @@ export interface TableColumn {
   options?: Array<{ id: string; value: string }>;
 }
 
+// Field/option enumeration order can change after native copy without a schema change.
+export function canonicalTableColumns(columns: TableColumn[]): TableColumn[] {
+  return columns
+    .map((column) => ({
+      ...column,
+      ...(column.options
+        ? {
+            options: [...column.options].sort((a, b) =>
+              a.id.localeCompare(b.id),
+            ),
+          }
+        : {}),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
 export interface TableSheet {
   id: string;
   columns: TableColumn[];

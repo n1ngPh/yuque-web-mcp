@@ -1,6 +1,8 @@
 # Table 单条归档实验 MCP
 
-这是可以从本仓库直接运行的独立 **stdio MCP 服务**，用于将自己的一条简单记录归档到同一知识库的另一张 Table。无需 `development/` 目录或作者的本机会话。代码仍属实验性质，不会自动加入主 HTTP `/mcp` 的 42 个工具，也未打包进默认 Docker 镜像。
+这是可以从本仓库直接运行的独立 **stdio MCP 服务**，用于将自己的一条简单记录归档到同一知识库的另一张 Table。无需 `development/` 目录或作者的本机会话。代码仍属实验性质，不会自动加入主 HTTP `/mcp` 的 47 个工具，也未打包进默认 Docker 镜像。
+
+> 主 HTTP MCP 现已提供多业务字段单行归档，推荐新接入使用 [主 MCP 归档方法](../../TABLE_ARCHIVE.md)：`yuque_preview_archive_table_record` → `yuque_confirm_change`，异常时 `yuque_get_table_archive_status`。本目录保留原有独立四工具及两字段限制。
 
 提供四个工具：
 

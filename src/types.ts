@@ -1,3 +1,6 @@
+import type { TableTransferPlan } from "./table-transfer.js";
+import type { TableArchivePlan } from "./table-archive.js";
+
 export interface UserCredentials {
   ownerId: string;
   bearerToken: string;
@@ -54,6 +57,12 @@ export type CapabilityName =
   | "restore_doc_version"
   | "get_sheet"
   | "get_table_records"
+  | "copy_table_document"
+  | "move_table_document"
+  | "get_table_record_content"
+  | "create_table_record"
+  | "update_table_record_values"
+  | "remove_table_record"
   | "convert_markdown"
   | "create_doc"
   | "mount_catalog_node"
@@ -102,7 +111,9 @@ export interface EndpointContract {
     | "CatalogNode"
     | "KnowledgeBase"
     | "Collaboration"
-    | "Comment";
+    | "Comment"
+    | "TableRecord"
+    | "Table";
   idempotent: boolean;
   requiredResponsePaths: string[];
   liveWriteEnabled?: boolean;
@@ -162,7 +173,9 @@ export type PendingChangeKind =
   | "change_comment"
   | "delete_doc"
   | "delete_sheet"
-  | "delete_book";
+  | "delete_book"
+  | "archive_table_record"
+  | "transfer_table_document";
 
 export type ChangeState =
   | "previewed"
@@ -176,6 +189,8 @@ export type ChangeState =
 
 export interface PendingChangePayload {
   schemaVersion: 3;
+  tableArchive?: TableArchivePlan;
+  tableTransfer?: TableTransferPlan;
   kind: PendingChangeKind;
   bookUrl?: string;
   docUrl?: string;
@@ -228,7 +243,9 @@ export interface PendingChangePayload {
     | "CatalogDirectory"
     | "CatalogDocument"
     | "KnowledgeBase"
-    | "Comment";
+    | "Comment"
+    | "TableRecord"
+    | "Table";
   confirmationText?: string;
   allowNonempty?: boolean;
 }

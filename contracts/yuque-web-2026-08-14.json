@@ -636,7 +636,7 @@
       "path": "/api/modules/table/doc/TableRecordController/show",
       "idempotent": true,
       "requiredResponsePaths": ["records", "hasMore", "users"],
-      "notes": "Organization Table/laketable browser HTTP capture on 2026-09-18. Query: docId, docType=Doc, sheetId, limit, offset. Rows are JSON-encoded data keyed by column ids; views.data is not the record source. View filters and row-description getContent are not applied. Personal Host and native Table export remain unverified."
+      "notes": "Organization Table/laketable browser HTTP capture on 2026-09-18. Query: docId, docType=Doc, sheetId, limit, offset. Rows are JSON-encoded data keyed by column ids; views.data is not the record source. View filters and row-description getContent are not applied. Personal Host Table reads remain unverified; organization Table Excel export was separately verified on 2026-09-20."
     },
     {
       "capability": "get_sheet",
@@ -971,7 +971,7 @@
           ]
         }
       ],
-      "notes": "Pinned frontend evidence identifies docs.exports, the Doc/Sheet format matrix and the five-second non-terminal-state polling workflow. Live closed-browser replay and response URL validation completed for personal Doc, personal LakeSheet, organization Doc and organization LakeSheet. The result is an export artifact link, not a document mutation; Preview/Confirm is not used."
+      "notes": "Pinned frontend evidence identifies docs.exports, the Doc/Sheet format matrix and the five-second non-terminal-state polling workflow. Live closed-browser replay and response URL validation completed for personal Doc, personal LakeSheet, organization Doc and organization LakeSheet. The result is an export artifact link, not a document mutation; Preview/Confirm is not used. Organization Table/laketable Excel export also verified on 2026-09-20: type=excel, force=0, two polls, same-host temporary xlsx delivery; no file downloaded."
     },
     {
       "capability": "import",
@@ -1021,6 +1021,92 @@
       "path": "/api/accounts/logout",
       "idempotent": false,
       "requiredResponsePaths": []
+    },
+    {
+      "capability": "get_table_record_content",
+      "verified": true,
+      "observedHostTypes": ["organization"],
+      "verifiedHostTypes": ["organization"],
+      "method": "POST",
+      "path": "/api/modules/table/doc/TableRecordController/getContent",
+      "idempotent": true,
+      "requiredResponsePaths": ["content"],
+      "notes": "Browser captures and 2026-09-20 live main-MCP acceptance on cloned organization Tables: 14 populated business fields across text/select/multiSelect/mention/date/progress, verified copy before source row removal, 274 other cloned rows unchanged and original Tables unchanged. Input and failure paths covered offline. Exact book allowlist, one-use confirmation and encrypted checkpoints; no atomic CAS."
+    },
+    {
+      "capability": "create_table_record",
+      "verified": true,
+      "observedHostTypes": ["organization"],
+      "verifiedHostTypes": ["organization"],
+      "method": "POST",
+      "path": "/api/modules/table/doc/TableRecordController/create",
+      "idempotent": false,
+      "requiredResponsePaths": ["records", "users"],
+      "notes": "Browser captures and 2026-09-20 live main-MCP acceptance on cloned organization Tables: 14 populated business fields across text/select/multiSelect/mention/date/progress, verified copy before source row removal, 274 other cloned rows unchanged and original Tables unchanged. Input and failure paths covered offline. Exact book allowlist, one-use confirmation and encrypted checkpoints; no atomic CAS.",
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["organization"],
+      "deletionEffect": "none",
+      "targetResourceType": "TableRecord"
+    },
+    {
+      "capability": "update_table_record_values",
+      "verified": true,
+      "observedHostTypes": ["organization"],
+      "verifiedHostTypes": ["organization"],
+      "method": "PUT",
+      "path": "/api/modules/table/doc/TableRecordValueController/bulkUpdate",
+      "idempotent": false,
+      "requiredResponsePaths": ["records"],
+      "notes": "Browser captures and 2026-09-20 live main-MCP acceptance on cloned organization Tables: 14 populated business fields across text/select/multiSelect/mention/date/progress, verified copy before source row removal, 274 other cloned rows unchanged and original Tables unchanged. Input and failure paths covered offline. Exact book allowlist, one-use confirmation and encrypted checkpoints; no atomic CAS.",
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["organization"],
+      "deletionEffect": "none",
+      "targetResourceType": "TableRecord"
+    },
+    {
+      "capability": "remove_table_record",
+      "verified": true,
+      "observedHostTypes": ["organization"],
+      "verifiedHostTypes": ["organization"],
+      "method": "DELETE",
+      "path": "/api/modules/table/doc/TableRecordController/remove",
+      "idempotent": false,
+      "requiredResponsePaths": ["success"],
+      "notes": "Browser captures and 2026-09-20 live main-MCP acceptance on cloned organization Tables: 14 populated business fields across text/select/multiSelect/mention/date/progress, verified copy before source row removal, 274 other cloned rows unchanged and original Tables unchanged. Input and failure paths covered offline. Exact book allowlist, one-use confirmation and encrypted checkpoints; no atomic CAS.",
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["organization"],
+      "deletionEffect": "content",
+      "targetResourceType": "TableRecord"
+    },
+    {
+      "capability": "copy_table_document",
+      "verified": true,
+      "observedHostTypes": ["organization"],
+      "verifiedHostTypes": ["organization"],
+      "method": "PUT",
+      "path": "/api/catalog_nodes/copy",
+      "idempotent": false,
+      "requiredResponsePaths": ["meta.docIds", "data"],
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["organization"],
+      "deletionEffect": "none",
+      "targetResourceType": "Table",
+      "notes": "Observed native Table document transfer HAR and 2026-09-20 live main-MCP acceptance on test clones. Copy/read-back of 47 and 228 rows; 228-row clone moved between books and back with stable document ID and content. Canonical field/option definitions and bounded read-only catalog polling handle native ordering and propagation delay. Single leaf Table, exact modified-book allowlists, Preview/Confirm; no atomic CAS."
+    },
+    {
+      "capability": "move_table_document",
+      "verified": true,
+      "observedHostTypes": ["organization"],
+      "verifiedHostTypes": ["organization"],
+      "method": "PUT",
+      "path": "/api/catalog_nodes/move",
+      "idempotent": false,
+      "requiredResponsePaths": ["meta.docIds", "data"],
+      "liveWriteEnabled": true,
+      "liveWriteHostTypes": ["organization"],
+      "deletionEffect": "none",
+      "targetResourceType": "Table",
+      "notes": "Observed native Table document transfer HAR and 2026-09-20 live main-MCP acceptance on test clones. Copy/read-back of 47 and 228 rows; 228-row clone moved between books and back with stable document ID and content. Canonical field/option definitions and bounded read-only catalog polling handle native ordering and propagation delay. Single leaf Table, exact modified-book allowlists, Preview/Confirm; no atomic CAS."
     }
   ]
 }

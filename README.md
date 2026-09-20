@@ -16,7 +16,7 @@
 | 普通文档正文、版本、指纹和富内容类型读取                        | 可用                                                         |
 | 普通文档原生 Word/Markdown/PDF/Lake/JPG 导出链接                | 个人Host已验证；只返回链接，不下载或缓存文件                 |
 | LakeSheet 工作表、A1 范围、值、公式、基础格式和部分图表信息读取 | 可用                                                         |
-| Table/laketable 数据表行记录读取                                | 组织空间只读；支持字段、真实记录、选项/人员映射和分页，不应用网页视图筛选；原生导出尚未支持 |
+| Table/laketable 数据表行记录读取                                | 组织空间只读；支持字段、真实记录、选项/人员映射和分页，不应用网页视图筛选；支持原生 Excel 导出 |
 | 文档与表格的结构化 Diff、预览、快照和冲突检查                   | 可用                                                         |
 | 私有个人知识库创建                                              | 已验证；默认`strict`只预览，`best_effort`可确认并回读最终URL |
 | 私有个人知识库名称与描述修改                                    | 已验证；只发送变更字段，默认`strict`只预览                   |
@@ -28,13 +28,19 @@
 | 私有知识库 reader/editor 协作者管理                             | 已验证；默认关闭，需精确白名单及`best_effort`确认            |
 | Doc、Sheet 和知识库整对象删除                                   | 个人Host已验证；默认关闭，需显式开关、精确白名单和二次确认   |
 
-服务目前注册42个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。
+服务目前注册47个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。Table 新能力已在独立测试副本上完成真实 MCP 验收；并发与字段范围另见下文。
 
-### 可选实验：Table 单条记录归档
+### Table 文档复制、移动和导出
 
-仓库公开提供了可独立运行的 [Table 归档实验 MCP](experiments/table-archive/README.md)，包含 `table-archive-core.mjs`、`table-archive-mcp.mjs`、私有计划生成命令、配置示例及离线测试。其他用户可使用自己的本地登录 profile 配置，无需开发者的私有研发目录。
+`yuque_preview_copy_table` 和 `yuque_preview_move_table` 通过统一确认流程提供组织 Table 的复制与跨知识库移动，回读核对内容和位置；`yuque_get_table_transfer_status` 提供只读对账。`yuque_create_export_link(format=excel)` 支持 Table 原生 Excel 导出。调用示例、权限与适用范围见 [Table 文档操作](TABLE_OPERATIONS.md)。
 
-该工具通过独立 stdio 服务提供 `table_archive_preview`、`table_archive_stage`、`table_archive_finalize`、`table_archive_status`，按“复制、回读核对、移除源记录”归档自己的一条两字段简单记录。默认只允许预览，写入需要显式开关、`best_effort` 和精确知识库白名单。它尚未整合进主 HTTP MCP 的 42 个工具，也不是通用批量迁移能力；适用范围和中断处理见实验说明。
+### Table 单条记录移动归档
+
+主 HTTP MCP 已提供 `yuque_preview_archive_table_record`，随后调用 `yuque_confirm_change` 即可自动完成“创建目标行、写入字段、回读核对、删除源行”。支持同一知识库组织 Table 的文本、单选、多选、人员、日期、进度等业务字段；字段或选项无法无损映射时拒绝。默认 `strict` 只预览，写入需要 `best_effort`、关闭写入急停、精确知识库白名单和删除确认。
+
+`yuque_get_table_archive_status` 可查询加密操作日志，并用 `reconcile=true` 只读核对两个固定记录 ID。部分成功或结果未知时不得盲目重试。请求格式有真实抓包依据，新主 MCP 集成通过离线测试和测试副本上的真实 MCP 验收；不具备原子跨表事务。完整调用示例、字段范围和恢复边界见 [Table 归档说明](TABLE_ARCHIVE.md)。
+
+此前公开的 [独立 Table 归档实验 MCP](experiments/table-archive/README.md) 继续保留，包含 `table-archive-core.mjs`、`table-archive-mcp.mjs` 和私有计划生成命令；其四个 `table_archive_*` 工具仍是独立 stdio 服务，限本人两字段简单记录。新接入可直接使用主 MCP，无需配置实验进程。Agent 升级与调用交接见 [Table 功能更新说明](TABLE_AGENT_UPDATE.md)，其中包含按条件顺序归档多条记录的使用方式。
 
 ## 数据安全
 
@@ -275,7 +281,7 @@ npm run check
 
 普通自动测试使用脱敏 fixture，不访问真实语雀。任何真实写入验证都应在专用测试知识库中人工启用，并在执行前确认目标完整路径、账号和 Host。
 
-部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、42个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应用户重新扫码即可恢复。
+部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、47个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应用户重新扫码即可恢复。
 
 ```bash
 MCP_ENV_FILE=/absolute/private/service.env \

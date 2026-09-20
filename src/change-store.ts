@@ -1,3 +1,4 @@
+import type { TableTransferInput } from "./table-transfer.js";
 import { createTwoFilesPatch } from "diff";
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
@@ -35,6 +36,12 @@ import type {
   YuqueWebClient,
 } from "./yuque-client.js";
 
+import {
+  executeTableArchive,
+  TableArchiveExecutionError,
+  type TableArchiveInput,
+} from "./table-archive.js";
+
 const SNAPSHOT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface PreviewResult {
@@ -70,7 +77,7 @@ interface SnapshotPayload {
 }
 
 interface ExecutionResult {
-  state: "succeeded" | "conflict" | "partial";
+  state: "succeeded" | "conflict" | "partial" | "unknown";
   result: Record<string, unknown>;
 }
 
@@ -93,6 +100,172 @@ export class ChangeStore {
     for (const row of this.db.markInterruptedChangesUnknown()) {
       this.audit(row, "unknown", "process_interrupted");
     }
+  }
+
+  async previewTableTransfer(
+    ownerId: string,
+    input: TableTransferInput,
+  ): Promise<PreviewResult> {
+    this.assertOwner(ownerId);
+    const plan = await this.client.prepareTableTransfer(ownerId, input);
+    const diff = [
+      `${input.action} Table: ${plan.source.displayPath}`,
+      `Source: ${plan.source.url}`,
+      `Target: ${plan.targetPath}`,
+      `Target book: ${plan.targetBook.url}`,
+      `Target book visibility: ${plan.targetBook.private ? "private" : "non-private"}`,
+      `Records: ${plan.source.records.length}`,
+      input.action === "copy"
+        ? "Create a separate Table; keep the source document."
+        : "Relocate this Table and preserve its document ID; the original URL will change.",
+    ].join("\n");
+    return this.savePreview(
+      {
+        schemaVersion: 3,
+        kind: "transfer_table_document",
+        tableTransfer: plan,
+        resourceType: "Table",
+        targetUrl: plan.targetBook.url,
+        displayPath: plan.targetPath,
+        baseFingerprint: plan.baselineFingerprint,
+        confirmationText: plan.targetPath,
+      },
+      diff,
+      [
+        "Target knowledge-base permissions apply after copy/move; confirm the exact target path and visibility.",
+        "Only organization leaf Tables on one Host and different books are supported. Native copy/move is one non-idempotent request; unknown/partial must be reconciled with the original token, never retried blindly.",
+        "Content and row descriptions are checked after transfer; comments/history and atomic cross-book transactions are not guaranteed. Test documents are retained for manual cleanup.",
+      ],
+      {
+        added_lines: 1,
+        removed_lines: input.action === "move" ? 1 : 0,
+        has_deletions: input.action === "move",
+      },
+    );
+  }
+
+  async getTableTransferStatus(
+    ownerId: string,
+    changeToken: string,
+    reconcile = false,
+  ): Promise<Record<string, unknown>> {
+    this.assertOwner(ownerId);
+    const row = this.db.getPendingChange(changeToken);
+    if (!row || row.kind !== "transfer_table_document")
+      throw new Error("Table transfer change not found");
+    const payload = this.crypto.decrypt<PendingChangePayload>(
+      row.encrypted_payload,
+      changeContext(changeToken, this.ownerId),
+    );
+    const plan = payload.tableTransfer;
+    if (!plan) throw new Error("Stored Table transfer plan missing");
+    return {
+      change_token: changeToken,
+      state: row.state,
+      phase: plan.phase,
+      source_url: plan.source.url,
+      target_book_url: plan.targetBook.url,
+      target_url: plan.resultUrl ?? null,
+      target_doc_id: plan.resultDocId ?? null,
+      automatic_retry_allowed: false,
+      ...(reconcile
+        ? {
+            reconciliation: await this.client.reconcileTableTransfer(
+              ownerId,
+              plan,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  async previewArchiveTableRecord(
+    ownerId: string,
+    input: TableArchiveInput,
+  ): Promise<PreviewResult & Record<string, unknown>> {
+    this.assertOwner(ownerId);
+    const plan = await this.client.prepareTableArchive(ownerId, input);
+    const diff = [
+      `Archive one record: ${plan.sourceRecord.uuid}`,
+      `From: ${plan.source.displayPath} (${plan.source.url})`,
+      `To: ${plan.target.displayPath} (${plan.target.url})`,
+      `New record ID: ${plan.targetRecordId}`,
+      ...plan.fields.map(
+        (f) =>
+          `${f.name}: ${JSON.stringify(f.displayValue)} [${f.sourceId} -> ${f.targetId}]`,
+      ),
+      "Remove the source only after all mapped business fields are verified in the target.",
+    ].join("\n");
+    return {
+      ...this.savePreview(
+        {
+          schemaVersion: 3,
+          kind: "archive_table_record",
+          targetUrl: plan.target.url,
+          displayPath: plan.target.displayPath,
+          tableArchive: plan,
+          resourceType: "TableRecord",
+          baseFingerprint: fingerprint(plan),
+        },
+        diff,
+        [
+          "Archive creates a new record ID and new system timestamps; source system metadata remains in the encrypted operation journal.",
+          "Only same-book organization Tables with at most 5000 rows are supported; nonempty row descriptions and unsupported fields are rejected.",
+          "Confirm requires best_effort, an inactive write kill switch, exact book allowlist and confirm_deletions=true. No atomic cross-table CAS is available.",
+          "If execution is partial or unknown, do not create another Preview or retry writes; call yuque_get_table_archive_status with reconcile=true.",
+        ],
+        { added_lines: 1, removed_lines: 1, has_deletions: true },
+      ),
+      source_url: plan.source.url,
+      source_display_path: plan.source.displayPath,
+      source_record_id: plan.sourceRecord.uuid,
+      target_record_id: plan.targetRecordId,
+      field_mapping: plan.fields.map((f) => ({
+        source_field_id: f.sourceId,
+        target_field_id: f.targetId,
+        name: f.name,
+        type: f.type,
+        display_value: f.displayValue,
+      })),
+    };
+  }
+
+  async getTableArchiveStatus(
+    ownerId: string,
+    changeToken: string,
+    reconcile = false,
+  ): Promise<Record<string, unknown>> {
+    this.assertOwner(ownerId);
+    const row = this.db.getPendingChange(changeToken);
+    if (!row || row.kind !== "archive_table_record")
+      throw new Error("Table archive change not found");
+    const payload = this.crypto.decrypt<PendingChangePayload>(
+      row.encrypted_payload,
+      changeContext(changeToken, this.ownerId),
+    );
+    const plan = payload.tableArchive;
+    if (!plan) throw new Error("Stored archive plan is missing");
+    return {
+      change_token: changeToken,
+      state: row.state,
+      phase: plan.phase,
+      source_url: plan.source.url,
+      target_url: plan.target.url,
+      source_record_id: plan.sourceRecord.uuid,
+      target_record_id: plan.targetRecordId,
+      expires_at: row.expires_at,
+      updated_at: row.updated_at,
+      needs_reconciliation: ["unknown", "partial"].includes(row.state),
+      automatic_retry_allowed: false,
+      ...(reconcile
+        ? {
+            reconciliation: await this.client.reconcileTableArchive(
+              ownerId,
+              plan,
+            ),
+          }
+        : {}),
+    };
   }
 
   async previewCreateBook(
@@ -1088,6 +1261,12 @@ export class ChangeStore {
         "Chart Confirm is disabled; cancel this local Preview. No remote write was attempted.",
       );
     }
+    if (payload.tableTransfer)
+      this.client.assertTableTransferWritable(payload.tableTransfer);
+    if (payload.tableArchive)
+      this.client
+        .tableArchiveIO(ownerId, payload.tableArchive)
+        .assertWritable();
     if (
       !this.db.transitionPendingChange(changeToken, ["previewed"], "executing")
     ) {
@@ -1097,9 +1276,17 @@ export class ChangeStore {
     this.activeConfirms += 1;
 
     try {
-      const execution = await this.withTargetLock(
-        payload.targetUrl || payload.bookUrl || payload.kind,
-        () => this.execute(ownerId, payload),
+      const targets = payload.tableTransfer
+        ? [
+            payload.tableTransfer.source.url,
+            payload.tableTransfer.sourceBook.url,
+            payload.tableTransfer.targetBook.url,
+          ]
+        : payload.tableArchive
+          ? [payload.tableArchive.source.url, payload.tableArchive.target.url]
+          : [payload.targetUrl || payload.bookUrl || payload.kind];
+      const execution = await this.withTargetLocks(targets, () =>
+        this.execute(ownerId, payload, changeToken),
       );
       this.db.transitionPendingChange(
         changeToken,
@@ -1195,7 +1382,73 @@ export class ChangeStore {
   private async execute(
     ownerId: string,
     payload: PendingChangePayload,
+    changeToken: string,
   ): Promise<ExecutionResult> {
+    if (payload.kind === "transfer_table_document") {
+      const plan = payload.tableTransfer;
+      if (!plan) throw new Error("Stored Table transfer plan missing");
+      const checkpoint = () =>
+        this.db.updateExecutingPayload(
+          changeToken,
+          this.crypto.encrypt(
+            payload,
+            changeContext(changeToken, this.ownerId),
+          ),
+        );
+      const result = await this.client.executeTableTransfer(
+        ownerId,
+        plan,
+        checkpoint,
+      );
+      return {
+        state: result.state as ExecutionResult["state"],
+        result: { ...result, change_token: changeToken },
+      };
+    }
+    if (payload.kind === "archive_table_record") {
+      const plan = payload.tableArchive;
+      if (!plan) throw new Error("Stored archive plan is missing");
+      const checkpoint = () =>
+        this.db.updateExecutingPayload(
+          changeToken,
+          this.crypto.encrypt(
+            payload,
+            changeContext(changeToken, this.ownerId),
+          ),
+        );
+      try {
+        const result = await executeTableArchive(
+          plan,
+          this.client.tableArchiveIO(ownerId, plan),
+          checkpoint,
+        );
+        return {
+          state: "succeeded",
+          result: {
+            ...result,
+            change_token: changeToken,
+            display_path: plan.target.displayPath,
+          },
+        };
+      } catch (error) {
+        if (!(error instanceof TableArchiveExecutionError)) throw error;
+        return {
+          state: error.state,
+          result: {
+            state: error.state,
+            phase: error.phase,
+            change_token: changeToken,
+            source_url: plan.source.url,
+            target_url: plan.target.url,
+            source_record_id: plan.sourceRecord.uuid,
+            target_record_id: plan.targetRecordId,
+            message: error.message,
+            needs_reconciliation: error.state !== "conflict",
+            automatic_retry_allowed: false,
+          },
+        };
+      }
+    }
     if (payload.kind === "create_book") {
       if (
         !payload.bookName ||
@@ -1853,6 +2106,18 @@ export class ChangeStore {
         };
       },
     );
+  }
+
+  private async withTargetLocks<T>(
+    targets: string[],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const sorted = [...new Set(targets)].sort();
+    const run = (index: number): Promise<T> =>
+      index === sorted.length
+        ? operation()
+        : this.withTargetLock(sorted[index]!, () => run(index + 1));
+    return run(0);
   }
 
   private async withTargetLock<T>(

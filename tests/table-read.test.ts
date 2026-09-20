@@ -197,7 +197,7 @@ describe("Table/laketable read", () => {
     ).rejects.toThrow(/offset/);
     await expect(
       fixture.client.getExportOptions("employee.a", fixture.url),
-    ).rejects.toThrow(/native Table export/);
+    ).rejects.toThrow(/abilities/);
     expect(fixture.unexpected).toEqual([]);
   });
 

@@ -163,6 +163,8 @@ function validateManifest(value: ContractManifest): void {
         "KnowledgeBase",
         "Collaboration",
         "Comment",
+        "TableRecord",
+        "Table",
       ].includes(endpoint.targetResourceType)
     ) {
       throw new ContractError(

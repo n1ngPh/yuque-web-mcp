@@ -85,10 +85,14 @@ describe("Yuque HTTP replay client", () => {
         operation === "createExportLink"
           ? client.createExportLink("employee.a", url, "excel")
           : client[operation]("employee.a", url);
-      await expect(result).rejects.toBeInstanceOf(UnsupportedResourceError);
-      await expect(result).rejects.toThrow(
-        "does not establish that the table has no records",
-      );
+      if (operation === "getDoc" || operation === "getSheet") {
+        await expect(result).rejects.toBeInstanceOf(UnsupportedResourceError);
+        await expect(result).rejects.toThrow(
+          "does not establish that the table has no records",
+        );
+      } else {
+        await expect(result).rejects.toThrow("organization Table/laketable");
+      }
       // No schema-as-text response, speculative records request or export job.
       expect(request).toHaveBeenCalledTimes(1);
     },

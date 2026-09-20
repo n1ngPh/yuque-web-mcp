@@ -22,9 +22,33 @@ import {
 } from "./sheet-model.js";
 import { PinnedLakeHtmlRenderer, type LakeHtmlRenderer } from "./lake-html.js";
 import { lakeText } from "./lake-document.js";
-import { parseTableSchema, parseTableRecords } from "./table-model.js";
+import {
+  canonicalTableColumns,
+  parseTableSchema,
+  parseTableRecords,
+} from "./table-model.js";
 import { createYuqueDispatcher } from "./network-policy.js";
 import type { Dispatcher } from "undici";
+
+import {
+  type ArchiveRecord,
+  type ArchiveTarget,
+  type TableArchiveSnapshot,
+  type TableArchiveIO,
+  type TableArchivePlan,
+  type TableArchiveInput,
+  prepareTableArchive,
+  reconcileTableArchive,
+} from "./table-archive.js";
+import type { TableColumn, TableSheet } from "./table-model.js";
+
+import {
+  prepareTransferPlan,
+  transferContentFingerprint,
+  transferCatalogFingerprint,
+  type TableTransferInput,
+  type TableTransferPlan,
+} from "./table-transfer.js";
 
 export class ReloginRequiredError extends Error {
   constructor() {
@@ -44,7 +68,7 @@ function assertNotDataTable(detail: Record<string, unknown>): void {
   if (detail.type === "Table") {
     throw new UnsupportedResourceError(
       "Target is a Yuque Table (data table), not a Doc or Sheet/lakesheet. " +
-        "Use yuque_get_table to read records; native Table export is not implemented. Document text " +
+        "Use yuque_get_table to read records and yuque_get_export_options for supported native exports. Document text " +
         "may contain only the schema; an empty views.data does not establish " +
         "that the table has no records. Open the original Yuque page to read it.",
     );
@@ -112,7 +136,7 @@ export const YUQUE_EXPORT_FORMATS = [
 ] as const;
 
 export type YuqueExportFormat = (typeof YUQUE_EXPORT_FORMATS)[number];
-export type YuqueExportTargetType = "Doc" | "Sheet";
+export type YuqueExportTargetType = "Doc" | "Sheet" | "Table";
 
 export interface YuqueExportOption {
   format: YuqueExportFormat;
@@ -187,6 +211,14 @@ const EXPORT_OPTIONS: Record<
       format: "jpg",
       label: "JPG 长图",
       extension: "jpg",
+      browserLoginExpected: true,
+    },
+  ],
+  Table: [
+    {
+      format: "excel",
+      label: "Excel",
+      extension: "xlsx",
       browserLoginExpected: true,
     },
   ],
@@ -2307,17 +2339,19 @@ export class YuqueWebClient {
     const id = String(requireNumber(detail, "id"));
     const title = requireStringValue(detail, "title");
     const slug = requireStringValue(detail, "slug");
-    assertNotDataTable(detail);
     const rawType = detail.type;
     if (
-      (rawType !== "Doc" && rawType !== "Sheet") ||
+      (rawType !== "Doc" && rawType !== "Sheet" && rawType !== "Table") ||
+      (rawType === "Table" &&
+        (detail.format !== "laketable" ||
+          this.contractHostTypeForTarget(docUrl) !== "organization")) ||
       (rawType === "Doc" && detail.format === "lakesheet") ||
       (rawType === "Sheet" && detail.format !== "lakesheet") ||
       requireNumber(detail, "book_id") !== book.id ||
       slug !== locator.docSlug
     ) {
       throw new ContractError(
-        "Native export currently supports only the requested ordinary Doc or LakeSheet",
+        "Native export supports the requested ordinary Doc, LakeSheet, or organization Table/laketable",
       );
     }
     const targetType: YuqueExportTargetType = rawType;
@@ -2692,6 +2726,496 @@ export class YuqueWebClient {
       next_offset: page.hasMore ? offset + page.records.length : null,
       complete: offset === 0 && !page.hasMore,
     };
+  }
+
+  async prepareTableTransfer(
+    employeeId: string,
+    input: TableTransferInput,
+  ): Promise<TableTransferPlan> {
+    const sourceBook = await this.resolveBook(employeeId, input.sourceUrl),
+      targetBook = await this.resolveBook(employeeId, input.targetBookUrl);
+    if (
+      this.contractHostTypeForTarget(sourceBook.url) !== "organization" ||
+      this.contractHostTypeForTarget(targetBook.url) !== "organization"
+    )
+      throw new ContractError(
+        "Native Table copy/move is verified only on organization Hosts",
+      );
+    const source = await this.getTableArchiveSnapshot(
+      employeeId,
+      input.sourceUrl,
+    );
+    const sourceCatalog = await this.loadCatalog(employeeId, sourceBook),
+      targetCatalog = await this.loadCatalog(employeeId, targetBook);
+    const content = await this.tableTransferContentFingerprint(
+      employeeId,
+      source,
+    );
+    return prepareTransferPlan(
+      input,
+      sourceBook,
+      targetBook,
+      source,
+      sourceCatalog,
+      targetCatalog,
+      content,
+    );
+  }
+
+  private async tableTransferContentFingerprint(
+    employeeId: string,
+    table: TableArchiveSnapshot,
+  ): Promise<string> {
+    const bodies: Record<string, unknown> = {};
+    for (let offset = 0; offset < table.records.length; offset += 100) {
+      const ids = table.records.slice(offset, offset + 100).map((r) => r.uuid);
+      const raw = asRecord(
+        await this.request(employeeId, "get_table_record_content", {
+          body: {
+            docId: table.id,
+            docType: "Doc",
+            sheetId: table.sheetId,
+            recordIds: ids,
+          },
+          baseHost: new URL(table.url).origin,
+          referer: table.url,
+          returnEnvelope: true,
+        }),
+        "Table descriptions",
+      );
+      Object.assign(bodies, asRecord(raw.content, "Table description map"));
+    }
+    return transferContentFingerprint(table, bodies);
+  }
+
+  assertTableTransferWritable(plan: TableTransferPlan): void {
+    if (
+      this.config.writeKillSwitch === true ||
+      this.config.writeConsistencyMode !== "best_effort"
+    )
+      throw new ContractError(
+        "Table transfer requires best_effort and an inactive write kill switch",
+      );
+    const books =
+      plan.input.action === "copy"
+        ? [plan.targetBook]
+        : [plan.sourceBook, plan.targetBook];
+    for (const book of books) {
+      if (
+        this.contractHostTypeForTarget(book.url) !== "organization" ||
+        !this.config.writeBookAllowlist?.includes(book.url)
+      )
+        throw new ContractError(
+          "Table transfer requires an exact write allowlist for every modified book",
+        );
+    }
+    this.contracts.getWritable(
+      plan.input.action === "copy"
+        ? "copy_table_document"
+        : "move_table_document",
+      "organization",
+    );
+  }
+
+  async executeTableTransfer(
+    employeeId: string,
+    plan: TableTransferPlan,
+    checkpoint: () => void,
+  ): Promise<Record<string, unknown>> {
+    let attempted = false;
+    const result = (state: string) => ({
+      state,
+      phase: plan.phase,
+      source_url: plan.source.url,
+      target_book_url: plan.targetBook.url,
+      target_doc_id: plan.resultDocId ?? null,
+      target_url: plan.resultUrl ?? null,
+      display_path: plan.targetPath,
+      automatic_retry_allowed: false,
+    });
+    try {
+      this.assertTableTransferWritable(plan);
+      if (plan.phase !== "prepared")
+        throw new ContractError("Table transfer cannot be retried");
+      const current = await this.prepareTableTransfer(employeeId, plan.input);
+      if (current.baselineFingerprint !== plan.baselineFingerprint)
+        throw new ContractError("Table transfer changed after Preview");
+      this.assertTableTransferWritable(plan);
+      plan.phase = "transmitting";
+      checkpoint();
+      attempted = true;
+      const response = asRecord(
+        await this.request(
+          employeeId,
+          plan.input.action === "copy"
+            ? "copy_table_document"
+            : "move_table_document",
+          {
+            body: {
+              book_id: plan.sourceBook.id,
+              node_uuid: plan.sourceNode.uuid,
+              target_uuid: plan.input.targetParentUuid || null,
+              action: "prependChild",
+              target_book_id: plan.targetBook.id,
+              with_children: plan.input.action === "move",
+              insert_to_catalog: true,
+            },
+            baseHost: plan.sourceBook.host,
+            referer: plan.source.url,
+            returnEnvelope: true,
+          },
+        ),
+        "Table transfer response",
+      );
+      const ids = asRecord(response.meta, "Transfer metadata").docIds;
+      if (
+        !Array.isArray(ids) ||
+        ids.length !== 1 ||
+        !Number.isSafeInteger(ids[0]) ||
+        ids[0] <= 0
+      )
+        throw new ContractError(
+          "Transfer response must identify exactly one document",
+        );
+      plan.resultDocId = ids[0];
+      plan.phase = "acknowledged";
+      checkpoint();
+      const sourceNodes = await this.waitForCatalog(
+        employeeId,
+        plan.sourceBook,
+        (nodes) =>
+          plan.input.action === "move"
+            ? !nodes.some((n) => String(n.docId) === plan.source.id)
+            : nodes.some((n) => String(n.docId) === plan.source.id),
+      );
+      const targetNodes = await this.waitForCatalog(
+        employeeId,
+        plan.targetBook,
+        (nodes) => nodes.some((n) => n.docId === plan.resultDocId),
+      );
+      const target = targetNodes.find((n) => n.docId === plan.resultDocId);
+      if (
+        !target?.docUrl ||
+        (target.parentUuid ?? "") !== (plan.input.targetParentUuid ?? "") ||
+        target.title !== plan.sourceNode.title
+      )
+        throw new ContractError(
+          "Transferred Table location does not match Preview",
+        );
+      plan.resultUrl = target.docUrl;
+      checkpoint();
+      const originalId = Number(plan.source.id),
+        isMove = plan.input.action === "move";
+      if (
+        isMove
+          ? plan.resultDocId !== originalId ||
+            sourceNodes.some((n) => n.docId === originalId)
+          : plan.resultDocId === originalId ||
+            !sourceNodes.some((n) => n.docId === originalId)
+      )
+        throw new ContractError("Table transfer identity mismatch");
+      if (
+        transferCatalogFingerprint(sourceNodes, isMove ? [originalId] : []) !==
+          transferCatalogFingerprint(
+            plan.sourceCatalog,
+            isMove ? [originalId] : [],
+          ) ||
+        transferCatalogFingerprint(targetNodes, [plan.resultDocId!]) !==
+          transferCatalogFingerprint(plan.targetCatalog)
+      )
+        throw new ContractError(
+          "Unrelated catalog nodes changed during transfer",
+        );
+      const copy = await this.getTableArchiveSnapshot(
+        employeeId,
+        target.docUrl,
+      );
+      if (
+        (await this.tableTransferContentFingerprint(employeeId, copy)) !==
+        plan.contentFingerprint
+      )
+        throw new ContractError(
+          "Transferred Table contents do not match source",
+        );
+      if (!isMove) {
+        const original = await this.getTableArchiveSnapshot(
+          employeeId,
+          plan.source.url,
+        );
+        if (
+          (await this.tableTransferContentFingerprint(employeeId, original)) !==
+          plan.contentFingerprint
+        )
+          throw new ContractError("Source Table changed while copying");
+      }
+      this.invalidateDocumentIndex(employeeId);
+      plan.phase = "completed";
+      checkpoint();
+      return {
+        ...result("succeeded"),
+        record_count: copy.records.length,
+        action: plan.input.action,
+      };
+    } catch (error) {
+      return {
+        ...result(
+          !attempted
+            ? "conflict"
+            : plan.phase === "transmitting"
+              ? "unknown"
+              : "partial",
+        ),
+        needs_reconciliation: attempted,
+        message:
+          (error instanceof ContractError ? error.message + ". " : "") +
+          "Transfer stopped; query yuque_get_table_transfer_status with reconcile=true before any new write. No automatic retry or cleanup was performed.",
+      };
+    }
+  }
+
+  async reconcileTableTransfer(
+    employeeId: string,
+    plan: TableTransferPlan,
+  ): Promise<Record<string, unknown>> {
+    const source = await this.loadCatalog(employeeId, plan.sourceBook),
+      target = await this.loadCatalog(employeeId, plan.targetBook);
+    const added = target.filter(
+      (n) => n.docId && !plan.targetCatalog.some((b) => b.docId === n.docId),
+    );
+    const knownId =
+      plan.resultDocId ??
+      (plan.input.action === "move" ? Number(plan.source.id) : undefined);
+    const known = knownId ? target.find((n) => n.docId === knownId) : undefined;
+    const matches = known?.docUrl
+      ? (await this.tableTransferContentFingerprint(
+          employeeId,
+          await this.getTableArchiveSnapshot(employeeId, known.docUrl),
+        )) === plan.contentFingerprint
+      : null;
+    return {
+      source_present: source.some((n) => String(n.docId) === plan.source.id),
+      target_present: !!known,
+      target_contents_match: matches,
+      target_url: known?.docUrl ?? null,
+      candidate_new_documents: added.map((n) => ({
+        id: n.docId,
+        url: n.docUrl,
+        display_path: n.displayPath,
+      })),
+      automatic_retry_allowed: false,
+    };
+  }
+
+  async getTableArchiveSnapshot(
+    employeeId: string,
+    docUrl: string,
+    sheetId?: string,
+  ): Promise<TableArchiveSnapshot> {
+    const table = await this.getTable(employeeId, docUrl, {
+      sheetId,
+      limit: 5000,
+    });
+    if (!table.complete || typeof table.sheet_id !== "string")
+      throw new ContractError(
+        "Archive needs a selected sheet and a complete table with at most 5000 records",
+      );
+    if (this.contractHostTypeForTarget(docUrl) !== "organization")
+      throw new ContractError(
+        "Table archives are supported only on organization Hosts",
+      );
+    const sheets = table.sheets as TableSheet[];
+    const sheet = sheets.find((s) => s.id === table.sheet_id)!;
+    const view = sheet.views.find((v) => v.type === "GRID");
+    if (!view) throw new ContractError("Archive requires a GRID view");
+    const id = String(table.id);
+    const response = asRecord(
+      await this.request(employeeId, "get_table_records", {
+        query: {
+          docId: id,
+          docType: "Doc",
+          sheetId: sheet.id,
+          offset: 0,
+          limit: 5000,
+        },
+        baseHost: new URL(docUrl).origin,
+        referer: docUrl,
+        returnEnvelope: true,
+      }),
+      "Archive records",
+    );
+    const page = parseTableRecords(response, sheet, id, 5000);
+    if (page.hasMore)
+      throw new ContractError(
+        "Archive table grew beyond the 5000-record limit",
+      );
+    const records = (response.records as Record<string, unknown>[]).map(
+      (row) => ({
+        ...row,
+        uuid: String(row.uuid),
+        data: asRecord(
+          typeof row.data === "string" ? JSON.parse(row.data) : row.data,
+          "Archive record data",
+        ),
+      }),
+    ) as ArchiveRecord[];
+    return {
+      url: String(table.url),
+      displayPath: String(table.display_path),
+      id,
+      bookUrl: String(table.book_url),
+      sheetId: sheet.id,
+      view,
+      columns: canonicalTableColumns(table.columns as TableColumn[]),
+      records,
+    };
+  }
+
+  async prepareTableArchive(
+    employeeId: string,
+    input: TableArchiveInput,
+  ): Promise<TableArchivePlan> {
+    const source = await this.getTableArchiveSnapshot(
+      employeeId,
+      input.sourceUrl,
+      input.sourceSheetId,
+    );
+    const target = await this.getTableArchiveSnapshot(
+      employeeId,
+      input.targetUrl,
+      input.targetSheetId,
+    );
+    const plan = prepareTableArchive(source, target, input.recordId);
+    if (
+      (await this.tableArchiveIO(employeeId, plan).content(
+        plan.source,
+        input.recordId,
+      )) !== null
+    )
+      throw new ContractError(
+        "Nonempty or unknown row descriptions are not supported for archive",
+      );
+    return plan;
+  }
+
+  tableArchiveIO(employeeId: string, plan: TableArchivePlan): TableArchiveIO {
+    const params = (target: ArchiveTarget) => ({
+      docId: target.id,
+      docType: "Doc",
+      sheetId: target.sheetId,
+      viewId: target.view.id,
+      type: target.view.type,
+    });
+    const assertWritable = () => {
+      if (
+        this.config.writeKillSwitch === true ||
+        this.config.writeConsistencyMode !== "best_effort"
+      )
+        throw new ContractError(
+          "Table archive writes require best_effort and an inactive write kill switch",
+        );
+      for (const target of [plan.source, plan.target]) {
+        if (
+          this.contractHostTypeForTarget(target.url) !== "organization" ||
+          !this.config.writeBookAllowlist?.includes(target.bookUrl)
+        )
+          throw new ContractError(
+            "Table archive requires an exact knowledge-base write allowlist on the organization Host",
+          );
+      }
+      for (const capability of [
+        "create_table_record",
+        "update_table_record_values",
+        "remove_table_record",
+      ] as const)
+        this.contracts.getWritable(capability, "organization");
+    };
+    const write = async (
+      target: ArchiveTarget,
+      capability:
+        | "create_table_record"
+        | "update_table_record_values"
+        | "remove_table_record",
+      extra: Record<string, unknown>,
+    ) => {
+      assertWritable();
+      const raw = asRecord(
+        await this.request(employeeId, capability, {
+          body: { ...params(target), ...extra },
+          baseHost: new URL(target.url).origin,
+          referer: target.url,
+          returnEnvelope: true,
+        }),
+        "Archive write response",
+      );
+      if (capability === "remove_table_record" && raw.success !== true)
+        throw new ContractError("Source record removal was not acknowledged");
+      if (capability !== "remove_table_record") {
+        if (
+          !Array.isArray(raw.records) ||
+          raw.records.length !== 1 ||
+          asRecord(raw.records[0], "Archive write row").uuid !==
+            plan.targetRecordId
+        )
+          throw new ContractError(
+            "Archive write acknowledgement does not identify the intended single record",
+          );
+      }
+    };
+    return {
+      assertWritable,
+      read: (target) =>
+        this.getTableArchiveSnapshot(employeeId, target.url, target.sheetId),
+      content: async (target, recordId) => {
+        const raw = asRecord(
+          await this.request(employeeId, "get_table_record_content", {
+            body: {
+              docId: target.id,
+              docType: "Doc",
+              sheetId: target.sheetId,
+              recordIds: [recordId],
+            },
+            baseHost: new URL(target.url).origin,
+            referer: target.url,
+            returnEnvelope: true,
+          }),
+          "Archive record content",
+        );
+        const content = asRecord(raw.content, "Archive content map");
+        if (!Object.hasOwn(content, recordId))
+          throw new ContractError("Archive record content missing");
+        return content[recordId];
+      },
+      create: async (target, recordId) => {
+        if (target.url !== plan.target.url || recordId !== plan.targetRecordId)
+          throw new ContractError("Archive create target mismatch");
+        await write(target, "create_table_record", {
+          data: [{ id: recordId }],
+        });
+      },
+      populate: async () =>
+        write(plan.target, "update_table_record_values", {
+          records: plan.fields.map((field) => ({
+            fieldId: field.targetId,
+            recordId: plan.targetRecordId,
+            data: { value: field.value },
+          })),
+        }),
+      remove: async (target, recordId) => {
+        if (
+          target.url !== plan.source.url ||
+          recordId !== plan.sourceRecord.uuid
+        )
+          throw new ContractError("Archive remove target mismatch");
+        await write(target, "remove_table_record", { recordIds: [recordId] });
+      },
+    };
+  }
+
+  async reconcileTableArchive(
+    employeeId: string,
+    plan: TableArchivePlan,
+  ): Promise<Record<string, unknown>> {
+    return reconcileTableArchive(plan, this.tableArchiveIO(employeeId, plan));
   }
 
   async convertMarkdown(
@@ -4979,7 +5503,10 @@ export function validateExportUrl(input: {
       throw new ContractError("Yuque temporary export route changed");
     }
     requireQuery(["attachable_id", "attachable_type", "filename"]);
-  } else if (input.targetType === "Sheet" && input.format === "excel") {
+  } else if (
+    (input.targetType === "Sheet" || input.targetType === "Table") &&
+    input.format === "excel"
+  ) {
     if (
       !/^\/attachments\/__temp\/[^/]+\/xlsx\/[^/]+\.xlsx$/.test(url.pathname)
     ) {

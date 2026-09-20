@@ -47,6 +47,11 @@ export const CAPABILITY_POLICIES: readonly CapabilityPolicy[] = [
   available("yuque_preview_restore_doc_version", personal),
   available("yuque_get_sheet", personalAndOrganization),
   available("yuque_get_table", ["organization"]),
+  available("yuque_preview_copy_table", ["organization"]),
+  available("yuque_preview_move_table", ["organization"]),
+  available("yuque_get_table_transfer_status", ["local", "organization"]),
+  available("yuque_preview_archive_table_record", ["organization"]),
+  available("yuque_get_table_archive_status", ["local", "organization"]),
   available("yuque_preview_create_book", personal),
   available("yuque_preview_update_book", personal),
   previewOnly(
