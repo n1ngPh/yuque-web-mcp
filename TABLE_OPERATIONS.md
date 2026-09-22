@@ -1,6 +1,6 @@
 # Table 文档复制、移动和 Excel 导出
 
-这些能力属于主 HTTP `/mcp`（47 个工具），使用调用者自己的语雀会话。当前根据浏览器捕获开放组织 Host 的 `Table/laketable`；普通 Doc 与 LakeSheet 的导出继续使用既有格式清单。整篇 Table 的复制/移动与[单条记录移动归档](TABLE_ARCHIVE.md)是不同操作。
+这些能力属于主 HTTP `/mcp`（49 个工具），使用调用者自己的语雀会话。当前根据浏览器捕获开放组织 Host 的 `Table/laketable`；普通 Doc 与 LakeSheet 的导出继续使用既有格式清单。整篇 Table 的复制/移动与[单条记录移动归档](TABLE_ARCHIVE.md)是不同操作。
 
 ## 复制与跨知识库移动
 

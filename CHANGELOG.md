@@ -4,6 +4,10 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## Unreleased
 
+- Add bounded Table filters, column projection and optional display-only output; preserve legacy reads. Add `yuque_get_table_stats` (49 total main tools) with complete bounded scans, identity-aware distributions and explicit bucket truncation. Optimized reads budget serialized MCP content and paginate without cutting cell values. See `TABLE_QUERY.md`.
+
+- Add read-only `yuque_get_doc_metadata` (introduced as the 48th main MCP tool) for Doc/Sheet/Table identity, catalog location, creator account, creation time and last editor. Reuse the verified detail endpoint without additional text/record requests or raw-content output; keep missing metadata null, validate identity, and expose the upstream creator-field provenance. Add synthetic personal/organization reads and mismatch tests.
+
 - Fix host-switch migration integration: update MCP instructions/tool descriptions and local/service/instance environment templates, document explicit migration from the removed main-service book allowlist, and restore Doc/Sheet creation test fixtures. Add checks that personal writes stay blocked when the personal switch is disabled or omitted, even with organization writes enabled; fix formatting that blocked CI. The standalone archive experiment retains its separate allowlist policy.
 
 - Add native organization Table document copy and cross-book move via `yuque_preview_copy_table`, `yuque_preview_move_table`, and `yuque_get_table_transfer_status`. Confirm enforces the exact destination path, the organization write switch, and single-use execution, and reads back catalog identity, business rows and descriptions. Enable Table Excel export through the existing native export tools. Canonicalize field/option enumeration order after observing native copies reorder otherwise identical schemas.

@@ -1,3 +1,9 @@
+import {
+  prepareTableQuery,
+  tableDistributions,
+  boundedTableOutput,
+  type TableQueryInput,
+} from "./table-query.js";
 import { CookieJar, type SerializedCookieJar } from "tough-cookie";
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
@@ -2176,6 +2182,57 @@ export class YuqueWebClient {
     };
   }
 
+  async getDocMetadata(employeeId: string, docUrl: string) {
+    const locator = parseYuqueUrl(docUrl, this.allowedYuqueHosts());
+    if (!locator.docSlug)
+      throw new Error("doc_url must include a document slug");
+    const book = await this.resolveBook(employeeId, docUrl);
+    const detail = asRecord(
+      await this.request(employeeId, "get_doc", {
+        pathParams: { docSlug: locator.docSlug },
+        query: { book_id: book.id, merge_dynamic_data: false },
+        baseHost: book.host,
+      }),
+      "Document metadata",
+    );
+    const id = String(requireNumber(detail, "id"));
+    const slug = requireStringValue(detail, "slug");
+    if (
+      requireNumber(detail, "book_id") !== book.id ||
+      slug !== locator.docSlug
+    )
+      throw new ContractError("Document metadata belongs to another target");
+    const nodes = await this.loadCatalog(employeeId, book);
+    const located = catalogDocuments(book, nodes).find(
+      (doc) => String(doc.id) === id && doc.slug === slug,
+    );
+    if (!located)
+      throw new ContractError(
+        "Document metadata has no matching catalog location",
+      );
+    const creator = metadataUser(detail.user, detail.user_id);
+    return {
+      response_rule:
+        "先展示display_path和url。按creator.id和created_at统计，不能用正文人名、last_editor或updated_at推断创建人或创建时间。creator来自语雀user/user_id；转移所有权、导入等特殊场景不保证代表最初作者。缺失字段为null，不推测。",
+      display_path: located.position.displayPath,
+      full_path: located.position.fullPath,
+      directory_path: located.position.path.slice(0, -1),
+      url: located.url,
+      id,
+      slug,
+      title: requireStringValue(detail, "title"),
+      book_id: book.id,
+      book_url: book.url,
+      source_type: optionalStringValue(detail.type) ?? null,
+      source_format: optionalStringValue(detail.format) ?? null,
+      creator,
+      creator_source: creator ? "user_id/user" : null,
+      created_at: metadataTimestamp(detail.created_at),
+      last_editor: metadataUser(detail.last_editor),
+      updated_at: metadataTimestamp(detail.updated_at),
+    };
+  }
+
   async getDoc(employeeId: string, docUrl: string): Promise<NormalizedDoc> {
     const locator = parseYuqueUrl(docUrl, this.allowedYuqueHosts());
     if (!locator.docSlug)
@@ -2620,7 +2677,11 @@ export class YuqueWebClient {
   async getTable(
     employeeId: string,
     docUrl: string,
-    input: { sheetId?: string; offset?: number; limit?: number } = {},
+    input: {
+      sheetId?: string;
+      offset?: number;
+      limit?: number;
+    } & TableQueryInput = {},
   ): Promise<Record<string, unknown>> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
@@ -2701,31 +2762,155 @@ export class YuqueWebClient {
         views: sheet.views,
       })),
     };
-    if (!input.sheetId && sheets.length > 1)
-      return { ...base, selection_required: true };
+    if (!input.sheetId && sheets.length > 1) {
+      const selection = { ...base, selection_required: true };
+      return input.filter !== undefined ||
+        input.columns !== undefined ||
+        input.raw !== undefined ||
+        input.groupBy !== undefined
+        ? boundedTableOutput({
+            ...selection,
+            sheets: sheets.map((s) => ({ id: s.id })),
+          })
+        : selection;
+    }
     const sheet = input.sheetId
       ? sheets.find((sheet) => sheet.id === input.sheetId)
       : sheets[0];
     if (!sheet) throw new Error("sheet_id was not found in the Table schema");
-    const response = await this.request(employeeId, "get_table_records", {
-      query: { docId: id, docType: "Doc", sheetId: sheet.id, offset, limit },
-      baseHost: book.host,
-      referer: located.url,
-      returnEnvelope: true,
-    });
-    const page = parseTableRecords(response, sheet, id, limit);
-    return {
+    const optimized =
+      input.filter !== undefined ||
+      input.columns !== undefined ||
+      input.raw !== undefined ||
+      input.groupBy !== undefined;
+    const query = prepareTableQuery(sheet.columns, input);
+    const scan = input.filter !== undefined || input.groupBy !== undefined;
+    const fetchPage = async (pageOffset: number, pageLimit: number) =>
+      parseTableRecords(
+        await this.request(employeeId, "get_table_records", {
+          query: {
+            docId: id,
+            docType: "Doc",
+            sheetId: sheet.id,
+            offset: pageOffset,
+            limit: pageLimit,
+          },
+          baseHost: book.host,
+          referer: located.url,
+          returnEnvelope: true,
+        }),
+        sheet,
+        id,
+        pageLimit,
+      );
+    let page;
+    if (scan) {
+      const records: ReturnType<typeof parseTableRecords>["records"] = [];
+      const seen = new Set<string>();
+      const started = Date.now();
+      let bytes = 0;
+      do {
+        if (Date.now() - started > 30000)
+          throw new ContractError(
+            "Table scan exceeded 30 seconds; no complete result available",
+          );
+        page = await fetchPage(
+          records.length,
+          Math.min(500, 5000 - records.length),
+        );
+        bytes += Buffer.byteLength(JSON.stringify(page.records));
+        if (bytes > 20 * 1024 * 1024 || Date.now() - started > 30000)
+          throw new ContractError(
+            "Table scan exceeded byte/time budget; no complete result available",
+          );
+        for (const row of page.records) {
+          if (seen.has(row.id))
+            throw new ContractError(
+              "Duplicate record during Table scan; table may have changed",
+            );
+          seen.add(row.id);
+          records.push(row);
+        }
+        if (page.hasMore && records.length >= 5000)
+          throw new ContractError(
+            "Table scan exceeds 5000 rows; no complete result available",
+          );
+      } while (page.hasMore);
+      const matched = records.filter(query.matches);
+      const summary = {
+        response_rule:
+          "统计或筛选基于本次完整有界扫描，不是原子快照；并发编辑可能影响结果。多人员/多选分别计数，同一行每个值只计一次。",
+        display_path: base.display_path,
+        full_path: base.full_path,
+        url: base.url,
+        id,
+        title: base.title,
+        book_url: book.url,
+        sheet_id: sheet.id,
+        total: records.length,
+        matched_total: matched.length,
+        scanned_count: records.length,
+        scan_complete: true,
+        snapshot_consistent: false,
+        filter_applied: input.filter !== undefined,
+      };
+      if (query.groups)
+        return boundedTableOutput({
+          ...summary,
+          output_format: "table_stats",
+          distributions: tableDistributions(matched, query.groups),
+        });
+      page = {
+        records: matched.slice(offset, offset + limit),
+        hasMore: offset + limit < matched.length,
+      };
+      Object.assign(base, summary, { pagination_basis: "filtered_records" });
+    } else page = await fetchPage(offset, limit);
+    const selectedIds = new Set(query.selected.map((c) => c.id));
+    const records = optimized
+      ? page.records.map((row) => ({
+          id: row.id,
+          cells: row.cells
+            .filter((c) => selectedIds.has(c.column_id))
+            .map((c) =>
+              input.raw === false
+                ? { column_id: c.column_id, display_value: c.display_value }
+                : c,
+            ),
+        }))
+      : page.records;
+    const result = {
       ...base,
+      ...(optimized
+        ? {
+            sheets: sheets.map((s) => ({ id: s.id })),
+            raw_included: input.raw !== false,
+            pagination_basis: scan ? "filtered_records" : "source_records",
+            output_limited: false,
+          }
+        : {}),
       sheet_id: sheet.id,
-      columns: sheet.columns,
-      records: page.records,
+      columns: optimized
+        ? query.selected.map(({ id, name, type }) => ({ id, name, type }))
+        : sheet.columns,
+      records,
       offset,
       limit,
-      returned_count: page.records.length,
+      returned_count: records.length,
       has_more: page.hasMore,
-      next_offset: page.hasMore ? offset + page.records.length : null,
+      next_offset: page.hasMore ? offset + records.length : null,
       complete: offset === 0 && !page.hasMore,
     };
+    return optimized ? boundedTableOutput(result, records, offset) : result;
+  }
+
+  async getTableStats(
+    employeeId: string,
+    docUrl: string,
+    input: { sheetId?: string; filter?: unknown; groupBy: unknown },
+  ) {
+    if (input.groupBy === undefined) throw new Error("group_by is required");
+    return this.getTable(employeeId, docUrl, input);
   }
 
   async prepareTableTransfer(
@@ -5334,6 +5519,34 @@ function sameHostname(value: string, expected: string): boolean {
   } catch {
     return false;
   }
+}
+
+function metadataTimestamp(value: unknown): string | null {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
+    ? value
+    : null;
+}
+
+function metadataUser(value: unknown, fallbackId?: unknown) {
+  const user =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const numericId = (id: unknown): string | null => {
+    if (typeof id === "number")
+      return Number.isSafeInteger(id) && id > 0 ? String(id) : null;
+    return typeof id === "string" && /^[1-9]\d*$/.test(id) ? id : null;
+  };
+  const id = numericId(fallbackId),
+    nestedId = numericId(user.id);
+  if (id && nestedId && id !== nestedId)
+    throw new ContractError("Document creator ID does not match user metadata");
+  if (!id && !nestedId) return null;
+  return {
+    id: id ?? nestedId,
+    login: optionalStringValue(user.login) ?? null,
+    name: optionalStringValue(user.name) ?? null,
+  };
 }
 
 function normalizeDoc(

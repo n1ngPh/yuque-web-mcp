@@ -28,7 +28,7 @@
 | 私有知识库 reader/editor 协作者管理                             | 已验证；默认关闭，需`best_effort`及协作者权限确认            |
 | Doc、Sheet 和知识库整对象删除                                   | 个人Host已验证；默认关闭，需显式开关和二次确认   |
 
-服务目前注册47个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。Table 新能力已在独立测试副本上完成真实 MCP 验收；并发与字段范围另见下文。
+服务目前注册49个MCP工具。`yuque_get_capabilities`会返回每个工具的`available`、`preview_only`或`disabled`状态。工具是否“存在”和远程写入是否“已开放”是两件事：创建、修改、权限变更和删除必须同时通过真实捕获、关闭浏览器重放、契约校验、并发检查及写后回读，缺少任一条件都会返回结构化错误。Table 新能力已在独立测试副本上完成真实 MCP 验收；并发与字段范围另见下文。
 
 ### Table 文档复制、移动和导出
 
@@ -41,6 +41,16 @@
 `yuque_get_table_archive_status` 可查询加密操作日志，并用 `reconcile=true` 只读核对两个固定记录 ID。部分成功或结果未知时不得盲目重试。请求格式有真实抓包依据，新主 MCP 集成通过离线测试和测试副本上的真实 MCP 验收；不具备原子跨表事务。完整调用示例、字段范围和恢复边界见 [Table 归档说明](TABLE_ARCHIVE.md)。
 
 此前公开的 [独立 Table 归档实验 MCP](experiments/table-archive/README.md) 继续保留，包含 `table-archive-core.mjs`、`table-archive-mcp.mjs` 和私有计划生成命令；其四个 `table_archive_*` 工具仍是独立 stdio 服务，限本人两字段简单记录。新接入可直接使用主 MCP，无需配置实验进程。Agent 升级与调用交接见 [Table 功能更新说明](TABLE_AGENT_UPDATE.md)，其中包含按条件顺序归档多条记录的使用方式。
+
+### Table 筛选与聚合统计
+
+`yuque_get_table` 支持可选 `filter`、`columns`、`raw=false`，在服务端筛选任务并减少返回字段；`yuque_get_table_stats` 直接返回字段分布。默认完整读取保持兼容，优化输出有大小预算并通过 `next_offset` 续读。参数、分组口径和扫描边界见 [Table 查询说明](TABLE_QUERY.md)。
+
+### 文档创建人和创建时间
+
+使用 `yuque_get_doc_metadata({"doc_url":"完整文档URL"})` 读取已定位 Doc、Sheet 或 Table 的元数据。返回完整路径、URL、类型、`creator: {id, login, name}`、`created_at`、`last_editor` 和 `updated_at`；缺失字段为 `null`。`creator` 来自语雀详情的 `user_id/user`，返回 `creator_source` 标明来源；转移所有权、导入等特殊场景不保证它代表最初作者。工具不返回正文、表格行或原始响应，也不额外调用正文/行记录接口；底层文档详情响应本身仍可能包含内容。
+
+统计某人创建的需求文档时，先明确知识库/目录与时间范围，用 `yuque_list_all_docs` 分页定位候选文档，再逐篇调用此工具，按稳定的 `creator.id` 和 `created_at` 筛选、按文档 ID 去重。不要搜索正文人名或用 `updated_at` 代替创建时间；同名用户、缺失创建人、读取失败须单独报告，结果仅覆盖当前账号可见范围。该工具不提供服务端按作者批量查询或元数据缓存；不要通过大量并发扫描正文补齐统计。
 
 ## 数据安全
 
@@ -283,7 +293,7 @@ npm run check
 
 普通自动测试使用脱敏 fixture，不访问真实语雀。任何真实写入验证都应在专用测试知识库中人工启用，并在执行前确认目标完整路径、账号和 Host。
 
-部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、47个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应用户重新扫码即可恢复。
+部署者可以选择使用只读Soak工具做耐久诊断。它默认每分钟检查健康、就绪、受保护指标、49个工具、能力清单和认证状态；只有显式给出精确知识库URL时才允许增加单篇Doc/Sheet读取。状态文件只保存计数、连续性指标和时间，不保存Token、正文或单元格数据。Soak不是发布强制门禁；语雀网页会话失效时，服务会返回`relogin_required`，对应用户重新扫码即可恢复。
 
 ```bash
 MCP_ENV_FILE=/absolute/private/service.env \

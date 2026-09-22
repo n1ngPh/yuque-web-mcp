@@ -24,7 +24,7 @@
 ## 部署与适用范围
 
 1. 更新仓库 `main`，按现有部署流程安装依赖、运行 `npm run check` 并重新构建/重启服务。保留现有运行数据目录、用户会话、Bearer Token 和加密密钥；容器部署须重建或采用包含本次源码的镜像。
-2. Agent 重新连接后检查 `tools/list` 是否为 47 个工具且包含上述五个新工具，再用 `yuque_get_capabilities` 核对实际可用性。仅升级提示词不会增加服务能力。
+2. Agent 重新连接后检查 `tools/list` 是否为 49 个工具且包含上述五个新工具，再用 `yuque_get_capabilities` 核对实际可用性。仅升级提示词不会增加服务能力。
 3. 写入由部署者明确启用：`WRITE_CONSISTENCY_MODE=best_effort`、`WRITE_KILL_SWITCH=false`、`YUQUE_WRITE_ORGANIZATION_OPEN=true`。复制/移动/归档均限组织 Host 的 Table，写权限由语雀账号体系兜底。默认 `strict` 仅预览，Agent 不应自行更改部署配置。
 
 ### 从知识库白名单配置迁移
@@ -42,3 +42,7 @@
 ## 验证结果
 
 本地主 MCP 已在独立测试副本上完成整篇复制、跨知识库移出再移回、Excel 导出链接生成和单条归档验收；随后又顺序归档 12 条“已完成”记录，全部成功。源副本 46 → 34 条，目标副本 229 → 241 条，映射业务字段匹配，263 条其他副本记录及两张原表记录均未变。测试副本保留，原始 HAR、会话和业务内容不随公开仓库发布。离线测试覆盖字段映射、写入门禁、中断日志、异常不重试和只读对账。
+
+## 后续只读工具更新
+
+主服务现为 49 个工具，新增 `yuque_get_doc_metadata`（创建账号、创建时间与位置）及 `yuque_get_table_stats`。`yuque_get_table` 增加 filter/columns/raw，可按人员账号 ID 筛选并精简输出；统计请直接调用 stats，不将全部行打印到终端。升级后刷新 tools/list，使用新返回的 next_offset 续读。详见 [Table 查询说明](TABLE_QUERY.md)。

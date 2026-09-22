@@ -210,7 +210,224 @@ describe("Table/laketable read", () => {
   });
 });
 
-async function createFixture(multipleSheets = false) {
+describe("bounded Table queries through MCP", () => {
+  it("continues compact byte-limited pages without skipping rows", async () => {
+    const f = await createFixture(false, {}, false, 601);
+    const ids: string[] = [];
+    let offset = 0;
+    let limited = false;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const result = await f.client.getTable("employee.a", f.url, {
+        columns: ["Title", "Status"],
+        raw: false,
+        limit: 500,
+        offset,
+      });
+      expect(
+        Buffer.byteLength(
+          JSON.stringify({
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          }),
+        ),
+      ).toBeLessThanOrEqual(40960);
+      const rows = result.records as Array<{ id: string }>;
+      ids.push(...rows.map((r) => r.id));
+      limited ||= result.output_limited === true;
+      if (!result.has_more) break;
+      expect(result.next_offset).toBe(offset + rows.length);
+      offset = result.next_offset as number;
+    }
+    expect(limited).toBe(true);
+    expect(ids).toEqual(Array.from({ length: 601 }, (_, i) => `record-${i}`));
+  });
+
+  it("filters before pagination and projection and keeps legacy reads intact", async () => {
+    const f = await createFixture();
+    const deps = { client: f.client } as McpDependencies;
+    const result = await callTool(
+      "employee.a",
+      "yuque_get_table",
+      {
+        doc_url: f.url,
+        filter: { Owner: { id: "7" } },
+        columns: ["Title"],
+        raw: false,
+        offset: 1,
+        limit: 1,
+      },
+      deps,
+    );
+    expect(result).toMatchObject({
+      total: 3,
+      matched_total: 3,
+      returned_count: 1,
+      has_more: true,
+      next_offset: 2,
+      pagination_basis: "filtered_records",
+      records: [
+        {
+          id: "record-1",
+          cells: [{ column_id: "title", display_value: "Task 1" }],
+        },
+      ],
+    });
+    expect(result).not.toHaveProperty("records.0.cells.0.value");
+    const last = await f.client.getTable("employee.a", f.url, {
+      filter: { Owner: "Alice" },
+      offset: 2,
+      limit: 1,
+    });
+    expect(last).toMatchObject({ has_more: false, next_offset: null });
+    const legacy = await f.client.getTable("employee.a", f.url, { limit: 1 });
+    expect(legacy).toHaveProperty("records.0.cells.0.value", "Task 0");
+    expect(f.unexpected).toEqual([]);
+  });
+
+  it("computes stats from all scanned pages without returning row payloads", async () => {
+    const f = await createFixture(false, {}, false, 601);
+    const result = await callTool(
+      "employee.a",
+      "yuque_get_table_stats",
+      {
+        doc_url: f.url,
+        group_by: ["Status", "Owner"],
+        filter: { Progress: 25 },
+      },
+      { client: f.client } as McpDependencies,
+    );
+    expect(result).toMatchObject({
+      total: 601,
+      matched_total: 601,
+      scan_complete: true,
+      distributions: [
+        {
+          column_id: "status",
+          buckets: [{ value: "doing", label: "In progress", count: 601 }],
+        },
+        {
+          column_id: "owner",
+          buckets: [{ value: "7", label: "Alice", count: 601 }],
+        },
+      ],
+    });
+    expect(result).not.toHaveProperty("records");
+    expect(f.recordQueries.map((q) => q.get("offset"))).toEqual(["0", "500"]);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(3000);
+  });
+
+  it("returns no matches accurately and refuses incomplete scans", async () => {
+    const f = await createFixture();
+    expect(
+      await f.client.getTableStats("employee.a", f.url, {
+        groupBy: ["Status"],
+        filter: { Owner: { id: "99" } },
+      }),
+    ).toMatchObject({
+      total: 3,
+      matched_total: 0,
+      distributions: [{ buckets: [] }],
+    });
+    const large = await createFixture(false, {}, false, 5001);
+    await expect(
+      large.client.getTableStats("employee.a", large.url, {
+        groupBy: ["Status"],
+      }),
+    ).rejects.toThrow(/5000 rows/);
+  });
+});
+
+describe("document metadata read", () => {
+  it.each([
+    ["Doc", "lake", false],
+    ["Sheet", "lakesheet", true],
+    ["Table", "laketable", false],
+  ])(
+    "reads %s metadata without text or row requests",
+    async (type, format, personal) => {
+      const f = await createFixture(
+        false,
+        {
+          type,
+          format,
+          user_id: 7,
+          user: {
+            id: 7,
+            name: "Alice",
+            login: "alice",
+            email: "private@example.test",
+          },
+          last_editor: { id: 8, name: "Bob", login: "bob" },
+          created_at: "2026-09-01T00:00:00Z",
+        },
+        personal,
+      );
+      const result = await callTool(
+        "employee.a",
+        "yuque_get_doc_metadata",
+        { doc_url: f.url },
+        { client: f.client } as McpDependencies,
+      );
+      expect(result).toMatchObject({
+        id: "12",
+        url: f.url,
+        source_type: type,
+        source_format: format,
+        creator: { id: "7", name: "Alice", login: "alice" },
+        last_editor: { id: "8", name: "Bob", login: "bob" },
+        created_at: "2026-09-01T00:00:00Z",
+        updated_at: "2026-09-18T00:00:00Z",
+        full_path: expect.any(Array),
+        display_path: expect.stringContaining("Table"),
+      });
+      for (const key of ["body", "content", "records", "raw", "markdown"])
+        expect(result).not.toHaveProperty(key);
+      expect(result).not.toHaveProperty("creator.email");
+      expect(f.recordQueries).toEqual([]);
+      expect(f.unexpected).toEqual([]);
+    },
+  );
+
+  it("does not infer a creator or creation date from the editor or updated date", async () => {
+    const f = await createFixture(false, {
+      created_at: "invalid",
+      last_editor: { id: 8, name: "Bob" },
+    });
+    expect(await f.client.getDocMetadata("employee.a", f.url)).toMatchObject({
+      creator: null,
+      creator_source: null,
+      created_at: null,
+      last_editor: { id: "8", name: "Bob", login: null },
+    });
+  });
+
+  it("preserves a creator ID when the user object is absent", async () => {
+    const f = await createFixture(false, { user_id: 7 });
+    expect(await f.client.getDocMetadata("employee.a", f.url)).toMatchObject({
+      creator: { id: "7", name: null, login: null },
+      last_editor: null,
+    });
+  });
+
+  it.each([
+    { book_id: 99 },
+    { slug: "other-doc" },
+    { id: 99 },
+    { user_id: 7, user: { id: 8 } },
+  ])("rejects mismatched identity %j", async (detail) => {
+    const f = await createFixture(false, detail);
+    await expect(f.client.getDocMetadata("employee.a", f.url)).rejects.toThrow(
+      /another target|catalog location|creator ID/,
+    );
+    expect(f.recordQueries).toEqual([]);
+  });
+});
+
+async function createFixture(
+  multipleSheets = false,
+  metadata: Record<string, unknown> = {},
+  personal = false,
+  totalRows = 3,
+) {
   const unexpected: string[] = [];
   const recordQueries: URLSearchParams[] = [];
   const server = createServer((req, res) => {
@@ -221,7 +438,17 @@ async function createFixture(multipleSheets = false) {
       res.statusCode = 405;
       return res.end("{}");
     }
-    if (url.pathname === "/api/mine/books")
+    if (
+      personal &&
+      ["/api/mine/collaborations", "/api/mine/collaborate_books"].includes(
+        url.pathname,
+      )
+    )
+      return res.end(JSON.stringify({ data: [] }));
+    if (
+      url.pathname ===
+      (personal ? "/api/mine/personal_books" : "/api/mine/books")
+    )
       return res.end(
         JSON.stringify({
           data: [
@@ -258,6 +485,7 @@ async function createFixture(multipleSheets = false) {
                   }
                 : schema,
             ),
+            ...metadata,
           },
         }),
       );
@@ -287,11 +515,11 @@ async function createFixture(multipleSheets = false) {
       const limit = Number(url.searchParams.get("limit"));
       return res.end(
         JSON.stringify({
-          records: [record(0), record(1), record(2)].slice(
-            offset,
-            offset + limit,
+          records: Array.from(
+            { length: Math.max(0, Math.min(limit, totalRows - offset)) },
+            (_, i) => record(offset + i),
           ),
-          hasMore: offset + limit < 3,
+          hasMore: offset + limit < totalRows,
           users,
         }),
       );
@@ -326,8 +554,8 @@ async function createFixture(multipleSheets = false) {
     port: 3000,
     publicBaseUrl: "http://127.0.0.1:3000",
     yuqueHost: host,
-    personalYuqueHost: "https://www.yuque.com",
-    organization: "test",
+    personalYuqueHost: personal ? host : "https://www.yuque.com",
+    organization: personal ? "" : "test",
     dataDir,
     databasePath: join(dataDir, "state.db"),
     contractPath: "contracts/yuque-web-2026-08-14.json",

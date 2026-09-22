@@ -60,8 +60,8 @@ const list = await fetch(baseUrl, {
 if (!list.ok) throw new Error(`tools/list failed: ${list.status}`);
 const payload = await mcpPayload(list);
 const count = payload.result?.tools?.length;
-if (count !== 47)
-  throw new Error(`expected 47 tools, received ${String(count)}`);
+if (count !== 49)
+  throw new Error(`expected 49 tools, received ${String(count)}`);
 const allDocs = payload.result?.tools?.find(
   (tool) => tool.name === "yuque_list_all_docs",
 );

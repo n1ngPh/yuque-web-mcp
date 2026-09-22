@@ -12,7 +12,7 @@ describe("Capability Registry", () => {
     expect(capabilityToolNames()).toEqual(
       toolDefinitions.map((tool) => tool.name),
     );
-    expect(capabilityToolNames()).toHaveLength(47);
+    expect(capabilityToolNames()).toHaveLength(49);
   });
 
   it("reports strict mode without exposing configured secrets or hosts", () => {
